@@ -447,4 +447,80 @@ defmodule AgentWorkshop.WorkshopTest do
       :telemetry.detach("test-agent-created")
     end
   end
+
+  describe "scheduling" do
+    test "every/3 creates a schedule" do
+      setup_mock()
+      Workshop.agent(:monitor, "Monitor")
+      Workshop.every(:monitor, "check status", interval: 100)
+      assert :monitor in AgentWorkshop.Scheduler.list_all()
+      Workshop.cancel(:monitor)
+    end
+
+    test "schedule ticks cast to agent" do
+      setup_mock()
+      Workshop.agent(:monitor, "Monitor")
+      AgentWorkshop.PubSub.subscribe(:schedule)
+      Workshop.every(:monitor, "check", interval: 50)
+      assert_receive {:workshop_event, :schedule, {:schedule, :tick, :monitor}}, 500
+      Workshop.cancel(:monitor)
+    end
+
+    test "cancel stops the schedule" do
+      setup_mock()
+      Workshop.agent(:monitor, "Monitor")
+      Workshop.every(:monitor, "check", interval: 100)
+      Workshop.cancel(:monitor)
+      refute :monitor in AgentWorkshop.Scheduler.list_all()
+    end
+
+    test "schedules/0 works" do
+      setup_mock()
+      Workshop.agent(:monitor, "Monitor")
+      Workshop.every(:monitor, "check", interval: 60_000)
+      assert :ok = Workshop.schedules()
+      Workshop.cancel(:monitor)
+    end
+  end
+
+  describe "budgets" do
+    test "global budget blocks when exceeded" do
+      setup_mock()
+      Workshop.configure(max_cost_usd: 0.005)
+      Workshop.agent(:impl, "Coder")
+      # First ask uses $0.01, exceeding the $0.005 budget
+      Workshop.ask(:impl, "hello")
+      # Second ask should be blocked
+      result = Workshop.ask(:impl, "hello again")
+      assert result == {:error, :budget_exceeded}
+    end
+
+    test "per-agent budget blocks when exceeded" do
+      setup_mock()
+      Workshop.agent(:impl, "Coder", max_cost_usd: 0.005)
+      Workshop.ask(:impl, "hello")
+      result = Workshop.ask(:impl, "hello again")
+      assert result == {:error, :budget_exceeded}
+    end
+
+    test "budget/0 shows global info" do
+      setup_mock()
+      assert :ok = Workshop.budget()
+    end
+
+    test "budget/1 shows agent info" do
+      setup_mock()
+      Workshop.agent(:impl, "Coder")
+      assert :ok = Workshop.budget(:impl)
+    end
+
+    test "reset_budget clears limits" do
+      setup_mock()
+      Workshop.configure(max_cost_usd: 1.00)
+      Workshop.reset_budget()
+      # After reset, no budget limit
+      info = AgentWorkshop.Budget.info(:global)
+      assert info.limit == nil
+    end
+  end
 end
