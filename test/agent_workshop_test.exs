@@ -313,4 +313,138 @@ defmodule AgentWorkshop.WorkshopTest do
       end
     end
   end
+
+  describe "shared store" do
+    test "put and get" do
+      setup_mock()
+      Workshop.put(:spec, "LRU cache")
+      assert Workshop.get(:spec) == "LRU cache"
+    end
+
+    test "get returns nil for missing key" do
+      setup_mock()
+      assert Workshop.get(:nonexistent) == nil
+    end
+
+    test "get with default" do
+      setup_mock()
+      assert Workshop.get(:missing, "fallback") == "fallback"
+    end
+
+    test "store_keys lists keys" do
+      setup_mock()
+      Workshop.put(:a, 1)
+      Workshop.put(:b, 2)
+      assert :a in Workshop.store_keys()
+      assert :b in Workshop.store_keys()
+    end
+
+    test "store_delete removes key" do
+      setup_mock()
+      Workshop.put(:temp, "value")
+      Workshop.store_delete(:temp)
+      assert Workshop.get(:temp) == nil
+    end
+
+    test "store shows entries" do
+      setup_mock()
+      Workshop.put(:spec, "cache")
+      assert :ok = Workshop.store()
+    end
+
+    test "namespaced keys" do
+      setup_mock()
+      Workshop.put({:impl, :notes}, "chose GenServer")
+      assert Workshop.get({:impl, :notes}) == "chose GenServer"
+    end
+
+    test "survives agent reset" do
+      setup_mock()
+      Workshop.agent(:impl, "Coder")
+      Workshop.put(:shared, "persists")
+      Workshop.reset(:impl)
+      assert Workshop.get(:shared) == "persists"
+    end
+  end
+
+  describe "pubsub" do
+    test "receives agent created event" do
+      setup_mock()
+      AgentWorkshop.PubSub.subscribe(:agent)
+      Workshop.agent(:impl, "Coder")
+      assert_receive {:workshop_event, :agent, {:agent, :created, :impl}}, 1000
+    end
+
+    test "receives agent dismissed event" do
+      setup_mock()
+      Workshop.agent(:impl, "Coder")
+      AgentWorkshop.PubSub.subscribe(:agent)
+      Workshop.dismiss(:impl)
+      assert_receive {:workshop_event, :agent, {:agent, :dismissed, :impl}}, 1000
+    end
+
+    test "receives ask complete event" do
+      setup_mock()
+      Workshop.agent(:impl, "Coder")
+      AgentWorkshop.PubSub.subscribe(:agent)
+      Workshop.ask(:impl, "hello")
+      assert_receive {:workshop_event, :agent, {:agent, :ask_complete, :impl, _result}}, 1000
+    end
+
+    test "receives store put event" do
+      setup_mock()
+      AgentWorkshop.PubSub.subscribe(:store)
+      Workshop.put(:key, "value")
+      assert_receive {:workshop_event, :store, {:store, :put, :key}}, 1000
+    end
+
+    test ":all topic receives everything" do
+      setup_mock()
+      AgentWorkshop.PubSub.subscribe(:all)
+      Workshop.agent(:impl, "Coder")
+      assert_receive {:workshop_event, :all, {:agent, :created, :impl}}, 1000
+    end
+  end
+
+  describe "telemetry" do
+    test "emits ask start and stop events" do
+      setup_mock()
+
+      ref =
+        :telemetry.attach(
+          "test-ask",
+          [:agent_workshop, :ask, :stop],
+          fn _event, measurements, metadata, _config ->
+            send(self(), {:telemetry, measurements, metadata})
+          end,
+          nil
+        )
+
+      Workshop.agent(:impl, "Coder")
+      Workshop.ask(:impl, "hello")
+
+      assert_receive {:telemetry, %{cost: _cost, duration: _duration}, %{agent: :impl}}, 1000
+
+      :telemetry.detach("test-ask")
+    end
+
+    test "emits agent created event" do
+      setup_mock()
+
+      :telemetry.attach(
+        "test-agent-created",
+        [:agent_workshop, :agent_created],
+        fn _event, _measurements, metadata, _config ->
+          send(self(), {:telemetry_created, metadata})
+        end,
+        nil
+      )
+
+      Workshop.agent(:impl, "Coder")
+
+      assert_receive {:telemetry_created, %{agent: :impl}}, 1000
+
+      :telemetry.detach("test-agent-created")
+    end
+  end
 end

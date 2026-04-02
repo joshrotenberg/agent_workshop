@@ -74,6 +74,8 @@ defmodule AgentWorkshop.Workshop do
         `-- Task.Supervisor (async tasks for cast/2)
   """
 
+  alias AgentWorkshop.{PubSub, Store, Telemetry}
+
   @table :agent_workshop_agents
   @state :agent_workshop_state
   @sessions_sup AgentWorkshop.Workshop.SessionsSupervisor
@@ -111,12 +113,16 @@ defmodule AgentWorkshop.Workshop do
         Process.sleep(10)
     end
 
-    # Agent init creates the ETS table so it's owned by a supervised process
+    # Start PubSub registry (before supervisor, so it's available immediately)
+    AgentWorkshop.PubSub.start_registry()
+
+    # Agent init creates ETS tables so they're owned by a supervised process
     agent_init = fn ->
       if :ets.info(@table) == :undefined do
         :ets.new(@table, [:named_table, :public, :set])
       end
 
+      AgentWorkshop.Store.create_table()
       default_state()
     end
 
@@ -153,6 +159,8 @@ defmodule AgentWorkshop.Workshop do
     if :ets.info(@table) != :undefined do
       :ets.delete(@table)
     end
+
+    AgentWorkshop.Store.delete_table()
 
     :ok
   end
@@ -346,6 +354,9 @@ defmodule AgentWorkshop.Workshop do
     }
 
     :ets.insert(@table, {name, entry})
+    global = get_global_state()
+    Telemetry.event(:agent_created, %{}, %{agent: name, role: role, backend: global.backend})
+    PubSub.broadcast({:agent, :created, name})
     :ok
   end
 
@@ -395,6 +406,8 @@ defmodule AgentWorkshop.Workshop do
         end
 
         :ets.delete(@table, name)
+        Telemetry.event(:agent_dismissed, %{}, %{agent: name})
+        PubSub.broadcast({:agent, :dismissed, name})
         :ok
     end
   end
@@ -467,6 +480,7 @@ defmodule AgentWorkshop.Workshop do
     }
 
     :ets.insert(@table, {name, updated})
+    PubSub.broadcast({:agent, :reset, name})
     :ok
   end
 
@@ -567,6 +581,60 @@ defmodule AgentWorkshop.Workshop do
       print_error("MCP server requires anubis_mcp, bandit, and plug deps.")
       {:error, :deps_missing}
     end
+  end
+
+  # ── Shared State ──────────────────────────────────────────────
+
+  @doc """
+  Put a value in the shared store.
+
+  Keys can be any term. Use tuples for namespacing.
+
+  ## Examples
+
+      put(:spec, "LRU cache with TTL support")
+      put({:impl, :notes}, "Chose GenServer over Agent")
+  """
+  defdelegate put(key, value), to: Store
+
+  @doc """
+  Get a value from the shared store. Returns `nil` if not found.
+  """
+  defdelegate get(key), to: Store
+
+  @doc """
+  Get a value with a default.
+  """
+  defdelegate get(key, default), to: Store
+
+  @doc """
+  List all keys in the shared store.
+  """
+  def store_keys, do: Store.keys()
+
+  @doc """
+  Delete a key from the shared store.
+  """
+  defdelegate store_delete(key), to: Store, as: :delete
+
+  @doc """
+  Show all entries in the shared store.
+  """
+  def store do
+    ensure_started()
+
+    case Store.entries() do
+      [] ->
+        print_info("Store is empty.")
+
+      entries ->
+        Enum.each(entries, fn {key, value} ->
+          val_str = inspect(value, limit: 80, printable_limit: 200)
+          IO.puts("  #{inspect(key)}: #{val_str}")
+        end)
+    end
+
+    :ok
   end
 
   # ── Interaction ───────────────────────────────────────────────
@@ -975,9 +1043,14 @@ defmodule AgentWorkshop.Workshop do
 
     IO.puts(IO.ANSI.yellow() <> "#{inspect(name)} working..." <> IO.ANSI.reset())
 
+    start_time = Telemetry.start(:ask, %{agent: name, prompt: prompt})
+
     case entry.backend.send_message(entry.pid, prompt, []) do
       {:ok, result} ->
         cost = result.cost_usd || 0.0
+        Telemetry.stop(:ask, start_time, %{cost: cost}, %{agent: name, prompt: prompt})
+        PubSub.broadcast({:agent, :ask_complete, name, result})
+
         current = get_agent!(name)
 
         update_agent(name, %{
@@ -993,6 +1066,9 @@ defmodule AgentWorkshop.Workshop do
         name
 
       {:error, reason} = err ->
+        Telemetry.error(:ask, start_time, reason, %{agent: name, prompt: prompt})
+        PubSub.broadcast({:agent, :error, name, reason})
+
         current = get_agent!(name)
         update_agent(name, %{current | status: :idle, task_text: nil})
         print_error("#{inspect(name)}: #{inspect(reason)}")
@@ -1006,8 +1082,12 @@ defmodule AgentWorkshop.Workshop do
     backend = entry.backend
     agent_name = name
 
+    Telemetry.start(:cast, %{agent: name, prompt: prompt})
+
     task =
       Task.Supervisor.async_nolink(@tasks_sup, fn ->
+        start_time = System.monotonic_time()
+
         result =
           try do
             backend.send_message(pid, prompt, [])
@@ -1015,7 +1095,7 @@ defmodule AgentWorkshop.Workshop do
             e -> {:error, {:crash, Exception.message(e)}}
           end
 
-        record_async_result(agent_name, result)
+        record_async_result(agent_name, result, start_time)
         result
       end)
 
@@ -1025,7 +1105,11 @@ defmodule AgentWorkshop.Workshop do
 
   # Update ETS with async task result, then drain the queue.
   # Called from within the task process.
-  defp record_async_result(agent_name, {:ok, result}) do
+  defp record_async_result(agent_name, {:ok, result}, start_time) do
+    cost = result.cost_usd || 0.0
+    Telemetry.stop(:cast, start_time, %{cost: cost}, %{agent: agent_name})
+    PubSub.broadcast({:agent, :cast_complete, agent_name, result})
+
     case get_agent(agent_name) do
       nil ->
         :ok
@@ -1034,7 +1118,7 @@ defmodule AgentWorkshop.Workshop do
         update_agent(agent_name, %{
           current
           | status: :idle,
-            cumulative_cost: current.cumulative_cost + (result.cost_usd || 0.0),
+            cumulative_cost: current.cumulative_cost + cost,
             turn_count: current.turn_count + 1,
             last_result: result
         })
@@ -1043,7 +1127,10 @@ defmodule AgentWorkshop.Workshop do
     end
   end
 
-  defp record_async_result(agent_name, {:error, _}) do
+  defp record_async_result(agent_name, {:error, reason}, start_time) do
+    Telemetry.error(:cast, start_time, reason, %{agent: agent_name})
+    PubSub.broadcast({:agent, :error, agent_name, reason})
+
     case get_agent(agent_name) do
       nil ->
         :ok
