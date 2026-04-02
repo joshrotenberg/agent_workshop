@@ -74,7 +74,7 @@ defmodule AgentWorkshop.Workshop do
         `-- Task.Supervisor (async tasks for cast/2)
   """
 
-  alias AgentWorkshop.{PubSub, Store, Telemetry}
+  alias AgentWorkshop.{Budget, PubSub, Scheduler, Store, Telemetry}
 
   @table :agent_workshop_agents
   @state :agent_workshop_state
@@ -113,8 +113,9 @@ defmodule AgentWorkshop.Workshop do
         Process.sleep(10)
     end
 
-    # Start PubSub registry (before supervisor, so it's available immediately)
+    # Start registries (before supervisor, so they're available immediately)
     AgentWorkshop.PubSub.start_registry()
+    AgentWorkshop.Scheduler.start_registry()
 
     # Agent init creates ETS tables so they're owned by a supervised process
     agent_init = fn ->
@@ -123,6 +124,7 @@ defmodule AgentWorkshop.Workshop do
       end
 
       AgentWorkshop.Store.create_table()
+      AgentWorkshop.Budget.create_table()
       default_state()
     end
 
@@ -161,6 +163,7 @@ defmodule AgentWorkshop.Workshop do
     end
 
     AgentWorkshop.Store.delete_table()
+    AgentWorkshop.Budget.delete_table()
 
     :ok
   end
@@ -224,6 +227,7 @@ defmodule AgentWorkshop.Workshop do
     {backend, opts} = Keyword.pop(opts, :backend)
     {backend_config, opts} = Keyword.pop(opts, :backend_config)
     {mcp_opts, opts} = Keyword.pop(opts, :mcp)
+    {max_cost_usd, opts} = Keyword.pop(opts, :max_cost_usd)
     query_opts = opts
     validate_opts!(query_opts)
 
@@ -245,6 +249,7 @@ defmodule AgentWorkshop.Workshop do
       }
     end)
 
+    if max_cost_usd, do: Budget.set_global(max_cost_usd)
     if mcp_opts, do: mcp_server(mcp_opts)
 
     :ok
@@ -317,6 +322,7 @@ defmodule AgentWorkshop.Workshop do
 
     # Merge global query opts with agent-specific opts (agent wins)
     agent_query_opts = split_opts(opts)
+    {agent_max_cost, agent_query_opts} = Keyword.pop(agent_query_opts, :max_cost_usd)
     validate_opts!(agent_query_opts)
     query_opts = Keyword.merge(global.query_opts, agent_query_opts)
 
@@ -354,6 +360,7 @@ defmodule AgentWorkshop.Workshop do
     }
 
     :ets.insert(@table, {name, entry})
+    if agent_max_cost, do: Budget.set_agent(name, agent_max_cost)
     global = get_global_state()
     Telemetry.event(:agent_created, %{}, %{agent: name, role: role, backend: global.backend})
     PubSub.broadcast({:agent, :created, name})
@@ -634,6 +641,124 @@ defmodule AgentWorkshop.Workshop do
         end)
     end
 
+    :ok
+  end
+
+  # ── Scheduling ────────────────────────────────────────────────
+
+  @doc """
+  Run an agent prompt on a recurring interval.
+
+  ## Examples
+
+      every(:monitor, "Check CI status", interval: :timer.minutes(5))
+      every(:sweeper, "Clean up stale branches", interval: :timer.hours(1))
+  """
+  @spec every(atom(), String.t(), keyword()) :: :ok
+  def every(name, prompt, opts) do
+    ensure_started()
+    get_agent!(name)
+    interval = Keyword.fetch!(opts, :interval)
+
+    # Stop existing schedule for this agent
+    Scheduler.stop(name)
+
+    {:ok, _pid} =
+      DynamicSupervisor.start_child(@sessions_sup, {
+        Scheduler,
+        agent: name, prompt: prompt, interval: interval
+      })
+
+    print_info("#{inspect(name)}: scheduled every #{format_interval(interval)}")
+    :ok
+  end
+
+  @doc """
+  List active schedules.
+  """
+  @spec schedules() :: :ok
+  def schedules do
+    ensure_started()
+    agents = Scheduler.list_all()
+
+    if agents == [] do
+      print_info("No active schedules.")
+    else
+      agents
+      |> Enum.map(&Scheduler.get_info/1)
+      |> Enum.reject(&is_nil/1)
+      |> Enum.each(&print_schedule_info/1)
+    end
+
+    :ok
+  end
+
+  @doc """
+  Cancel a scheduled task.
+  """
+  @spec cancel(atom()) :: :ok
+  def cancel(name) do
+    Scheduler.stop(name)
+    :ok
+  end
+
+  # ── Budget ───────────────────────────────────────────────────
+
+  @doc """
+  Show budget info. With no argument, shows global. With an agent name, shows per-agent.
+
+  ## Examples
+
+      budget()          # global budget info
+      budget(:impl)     # per-agent budget
+  """
+  @spec budget(atom() | :global) :: :ok
+  def budget(target \\ :global)
+
+  def budget(:global) do
+    ensure_started()
+    info = Budget.info(:global)
+
+    if info.limit do
+      print_info(
+        "Global: $#{Float.round(info.spent, 2)} / $#{Float.round(info.limit, 2)} " <>
+          "($#{Float.round(info.remaining, 2)} remaining)"
+      )
+    else
+      print_info("Global: no budget set (spent $#{Float.round(info.spent, 2)})")
+    end
+
+    :ok
+  end
+
+  def budget(name) when is_atom(name) do
+    ensure_started()
+    entry = get_agent!(name)
+    agent_info = Budget.info(name)
+
+    if agent_info.limit do
+      remaining = max(agent_info.limit - entry.cumulative_cost, 0.0)
+
+      print_info(
+        "#{inspect(name)}: $#{Float.round(entry.cumulative_cost, 2)} / $#{Float.round(agent_info.limit, 2)} " <>
+          "($#{Float.round(remaining, 2)} remaining)"
+      )
+    else
+      print_info(
+        "#{inspect(name)}: no budget set (spent $#{Float.round(entry.cumulative_cost, 2)})"
+      )
+    end
+
+    :ok
+  end
+
+  @doc """
+  Reset budget tracking. Clears all budget limits.
+  """
+  @spec reset_budget() :: :ok
+  def reset_budget do
+    Budget.clear()
+    print_info("Budgets cleared.")
     :ok
   end
 
@@ -1039,6 +1164,18 @@ defmodule AgentWorkshop.Workshop do
 
   defp do_send_sync(name, prompt) do
     entry = get_agent!(name)
+
+    case Budget.check(name, entry.cumulative_cost, 0.0) do
+      {:error, :budget_exceeded, reason} ->
+        print_error(reason)
+        {:error, :budget_exceeded}
+
+      :ok ->
+        do_send_sync_inner(name, prompt, entry)
+    end
+  end
+
+  defp do_send_sync_inner(name, prompt, entry) do
     update_agent(name, %{entry | status: :working, task_text: truncate(prompt, 36)})
 
     IO.puts(IO.ANSI.yellow() <> "#{inspect(name)} working..." <> IO.ANSI.reset())
@@ -1078,6 +1215,18 @@ defmodule AgentWorkshop.Workshop do
 
   defp do_send_async(name, prompt) do
     entry = get_agent!(name)
+
+    case Budget.check(name, entry.cumulative_cost, 0.0) do
+      {:error, :budget_exceeded, reason} ->
+        print_error(reason)
+        {:error, :budget_exceeded}
+
+      :ok ->
+        do_send_async_inner(name, prompt, entry)
+    end
+  end
+
+  defp do_send_async_inner(name, prompt, entry) do
     pid = entry.pid
     backend = entry.backend
     agent_name = name
@@ -1300,6 +1449,22 @@ defmodule AgentWorkshop.Workshop do
 
   defp plural(1), do: ""
   defp plural(_), do: "s"
+
+  defp print_schedule_info(info) do
+    last =
+      if info.last_run_at,
+        do: Calendar.strftime(info.last_run_at, "%H:%M:%S"),
+        else: "never"
+
+    print_info(
+      "#{inspect(info.agent)}: every #{format_interval(info.interval)}, #{info.run_count} runs, last: #{last}"
+    )
+  end
+
+  defp format_interval(ms) when ms >= 3_600_000, do: "#{div(ms, 3_600_000)}h"
+  defp format_interval(ms) when ms >= 60_000, do: "#{div(ms, 60_000)}m"
+  defp format_interval(ms) when ms >= 1_000, do: "#{div(ms, 1_000)}s"
+  defp format_interval(ms), do: "#{ms}ms"
 
   defp print_turn({turn, i}) do
     cost_str = if turn.cost_usd, do: " (#{format_cost(turn.cost_usd)})", else: ""
