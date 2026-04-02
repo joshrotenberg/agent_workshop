@@ -1,5 +1,9 @@
 # AgentWorkshop
 
+[![CI](https://github.com/joshrotenberg/agent_workshop/actions/workflows/ci.yml/badge.svg)](https://github.com/joshrotenberg/agent_workshop/actions/workflows/ci.yml)
+[![Hex.pm](https://img.shields.io/hexpm/v/agent_workshop.svg)](https://hex.pm/packages/agent_workshop)
+[![Docs](https://img.shields.io/badge/hex-docs-blue.svg)](https://hexdocs.pm/agent_workshop)
+
 Multi-agent orchestration for IEx. Backend-agnostic, MCP-enabled.
 
 Run multiple LLM agents side by side, coordinate them with simple
