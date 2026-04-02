@@ -410,15 +410,14 @@ defmodule AgentWorkshop.WorkshopTest do
     test "emits ask start and stop events" do
       setup_mock()
 
-      ref =
-        :telemetry.attach(
-          "test-ask",
-          [:agent_workshop, :ask, :stop],
-          fn _event, measurements, metadata, _config ->
-            send(self(), {:telemetry, measurements, metadata})
-          end,
-          nil
-        )
+      :telemetry.attach(
+        "test-ask",
+        [:agent_workshop, :ask, :stop],
+        fn _event, measurements, metadata, _config ->
+          send(self(), {:telemetry, measurements, metadata})
+        end,
+        nil
+      )
 
       Workshop.agent(:impl, "Coder")
       Workshop.ask(:impl, "hello")
@@ -751,7 +750,6 @@ defmodule AgentWorkshop.WorkshopTest do
     test "workshop_tools option adds mcp_config to query_opts" do
       setup_mock()
       Workshop.agent(:orchestrator, "Coordinator", workshop_tools: true)
-      entry = Workshop.info(:orchestrator)
       # The mcp_config should be in the query_opts (not visible in info, but agent was created)
       assert :orchestrator in Workshop.agents()
     end
