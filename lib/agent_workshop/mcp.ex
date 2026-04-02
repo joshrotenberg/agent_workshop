@@ -708,6 +708,8 @@ if Code.ensure_loaded?(Anubis.Server) do
     | cost | Show costs across all agents |
     """
 
+    require Logger
+
     @default_request_timeout 300_000
 
     @doc false
@@ -724,12 +726,14 @@ if Code.ensure_loaded?(Anubis.Server) do
       * `:port` - HTTP port (default: 4222)
       * `:request_timeout` - MCP request timeout in ms (default: 300_000 / 5 min)
       * `:session_idle_timeout` - Session idle timeout in ms (default: 1_800_000 / 30 min)
+      * `:debug` - when `true`, skip suppression of Anubis transport debug logs (default: false)
     """
     @spec start(keyword()) :: Supervisor.on_start()
     def start(opts \\ []) do
       port = Keyword.get(opts, :port, 4222)
       request_timeout = Keyword.get(opts, :request_timeout, @default_request_timeout)
       session_idle_timeout = Keyword.get(opts, :session_idle_timeout, 1_800_000)
+      debug = Keyword.get(opts, :debug, false)
 
       unless Code.ensure_loaded?(Bandit) do
         raise "Bandit is required for HTTP transport. Add {:bandit, \"~> 1.0\"} to your deps."
@@ -746,10 +750,20 @@ if Code.ensure_loaded?(Anubis.Server) do
         {Bandit, plug: AgentWorkshop.MCP.Router, port: port, scheme: :http}
       ]
 
-      Supervisor.start_link(children,
-        strategy: :one_for_one,
-        name: AgentWorkshop.MCP.Supervisor
-      )
+      result =
+        Supervisor.start_link(children,
+          strategy: :one_for_one,
+          name: AgentWorkshop.MCP.Supervisor
+        )
+
+      unless debug do
+        Logger.put_module_level(Anubis.Server.Transport.StreamableHTTP, :warning)
+        Logger.put_module_level(Anubis.Server.Transport.StreamableHTTP.Plug, :warning)
+        Logger.put_module_level(Anubis.Server.Session, :warning)
+        Logger.put_module_level(Anubis.Server.Transport.STDIO, :warning)
+      end
+
+      result
     end
   end
 end
