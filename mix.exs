@@ -48,7 +48,7 @@ defmodule AgentWorkshop.MixProject do
     [
       licenses: ["MIT"],
       links: %{"GitHub" => @source_url},
-      files: ~w(lib mix.exs README.md LICENSE .formatter.exs),
+      files: ~w(lib skills AGENTS.md mix.exs README.md LICENSE .formatter.exs),
       maintainers: ["Josh Rotenberg"]
     ]
   end
