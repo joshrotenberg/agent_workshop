@@ -1,4 +1,5 @@
 defmodule AgentWorkshop.Workshop do
+  require Logger
   @moduledoc """
   Multi-agent IEx API for coordinating LLM CLI sessions.
 
@@ -82,7 +83,7 @@ defmodule AgentWorkshop.Workshop do
   @tasks_sup AgentWorkshop.Workshop.TasksSupervisor
   @supervisor AgentWorkshop.Workshop.Supervisor
 
-  @special_keys [:backend, :backend_config, :context, :workshop_tools, :skill, :max_cost_usd]
+  @special_keys [:backend, :backend_config, :context, :workshop_tools, :skill, :max_cost_usd, :timeout]
   @max_queue_size 5
   @valid_permission_modes [:default, :accept_edits, :bypass_permissions, :dont_ask, :plan, :auto]
 
@@ -327,6 +328,7 @@ defmodule AgentWorkshop.Workshop do
     {workshop_tools, opts} = Keyword.pop(opts, :workshop_tools, false)
     {skill, opts} = Keyword.pop(opts, :skill)
     {agent_max_cost, opts} = Keyword.pop(opts, :max_cost_usd)
+    {agent_timeout, opts} = Keyword.pop(opts, :timeout)
 
     # Compose system prompt: skill context + global context + role
     skill_context =
@@ -375,6 +377,7 @@ defmodule AgentWorkshop.Workshop do
       role: role,
       agent_opts: opts,
       query_opts: query_opts,
+      timeout: agent_timeout,
       status: :idle,
       task: nil,
       task_text: nil,
@@ -1564,11 +1567,32 @@ defmodule AgentWorkshop.Workshop do
 
     start_time = Telemetry.start(:ask, %{agent: name, prompt: prompt})
 
-    case entry.backend.send_message(entry.pid, prompt, []) do
-      {:ok, result} ->
-        cost = result.cost_usd || 0.0
+    Logger.info("[workshop] agent #{inspect(name)} sending message")
+
+    result =
+      case entry.timeout do
+        nil ->
+          entry.backend.send_message(entry.pid, prompt, [])
+
+        timeout ->
+          task =
+            Task.Supervisor.async_nolink(@tasks_sup, fn ->
+              entry.backend.send_message(entry.pid, prompt, [])
+            end)
+
+          case Task.yield(task, timeout) || Task.shutdown(task) do
+            {:ok, backend_result} -> backend_result
+            nil -> {:error, :timeout}
+          end
+      end
+
+    Logger.info("[workshop] agent #{inspect(name)} got response")
+
+    case result do
+      {:ok, r} ->
+        cost = r.cost_usd || 0.0
         Telemetry.stop(:ask, start_time, %{cost: cost}, %{agent: name, prompt: prompt})
-        PubSub.broadcast({:agent, :ask_complete, name, result})
+        PubSub.broadcast({:agent, :ask_complete, name, r})
 
         current = get_agent!(name)
 
@@ -1578,10 +1602,10 @@ defmodule AgentWorkshop.Workshop do
             task_text: nil,
             cumulative_cost: current.cumulative_cost + cost,
             turn_count: current.turn_count + 1,
-            last_result: result
+            last_result: r
         })
 
-        print_result(name, result)
+        print_result(name, r)
         name
 
       {:error, reason} = err ->
@@ -1619,12 +1643,16 @@ defmodule AgentWorkshop.Workshop do
       Task.Supervisor.async_nolink(@tasks_sup, fn ->
         start_time = System.monotonic_time()
 
+        Logger.info("[workshop] agent #{inspect(agent_name)} sending message")
+
         result =
           try do
             backend.send_message(pid, prompt, [])
           rescue
             e -> {:error, {:crash, Exception.message(e)}}
           end
+
+        Logger.info("[workshop] agent #{inspect(agent_name)} got response")
 
         record_async_result(agent_name, result, start_time)
         result
