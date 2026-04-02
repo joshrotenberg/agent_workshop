@@ -428,14 +428,7 @@ defmodule AgentWorkshop.Workshop do
         :ok
 
       entry ->
-        try do
-          if entry.task, do: Task.Supervisor.terminate_child(@tasks_sup, entry.task.pid)
-          entry.backend.stop_session(entry.pid)
-          DynamicSupervisor.terminate_child(@sessions_sup, entry.pid)
-        catch
-          :exit, _ -> :ok
-        end
-
+        force_stop_agent(entry)
         :ets.delete(@table, name)
         Telemetry.event(:agent_dismissed, %{}, %{agent: name})
         PubSub.broadcast({:agent, :dismissed, name})
@@ -461,9 +454,7 @@ defmodule AgentWorkshop.Workshop do
     ensure_started()
     entry = get_agent!(name)
 
-    if entry.task do
-      Task.Supervisor.terminate_child(@tasks_sup, entry.task.pid)
-    end
+    force_stop_agent(entry)
 
     global = get_global_state()
 
@@ -488,15 +479,6 @@ defmodule AgentWorkshop.Workshop do
 
     backend = entry.backend
     backend_config = entry.backend_config
-
-    # Stop old session
-    try do
-      backend.stop_session(entry.pid)
-    catch
-      :exit, _ -> :ok
-    end
-
-    DynamicSupervisor.terminate_child(@sessions_sup, entry.pid)
 
     # Start fresh session
     {:ok, pid} =
@@ -1705,6 +1687,38 @@ defmodule AgentWorkshop.Workshop do
 
   defp update_agent(name, entry) do
     :ets.insert(@table, {name, entry})
+  end
+
+  # Stop an agent's processes with escalating force:
+  # 1. Try graceful stop (3 second timeout)
+  # 2. If that fails, kill the process directly
+  defp force_stop_agent(entry) do
+    # Kill any async task first
+    if entry.task do
+      try do
+        Task.Supervisor.terminate_child(@tasks_sup, entry.task.pid)
+      catch
+        :exit, _ -> :ok
+      end
+    end
+
+    # Try graceful stop with short timeout
+    pid = entry.pid
+
+    try do
+      GenServer.stop(pid, :normal, 3_000)
+    catch
+      :exit, _ ->
+        # Graceful stop failed — force kill
+        if Process.alive?(pid), do: Process.exit(pid, :kill)
+    end
+
+    # Clean up from DynamicSupervisor
+    try do
+      DynamicSupervisor.terminate_child(@sessions_sup, pid)
+    catch
+      :exit, _ -> :ok
+    end
   end
 
   defp write_workshop_mcp_config do
