@@ -519,6 +519,47 @@ defmodule AgentWorkshop.Workshop do
     end
   end
 
+  @doc """
+  Start the Workshop MCP server.
+
+  Exposes all Workshop functions as MCP tools over HTTP.
+  Requires `anubis_mcp`, `bandit`, and `plug` deps.
+
+  Can also be triggered via `configure(mcp: [port: 4222])`.
+
+  ## Examples
+
+      mcp_server()                # start on default port 4222
+      mcp_server(port: 8080)      # custom port
+  """
+  @spec mcp_server(keyword() | boolean()) :: :ok | {:error, term()}
+  def mcp_server(opts \\ [])
+
+  def mcp_server(true), do: mcp_server([])
+
+  def mcp_server(opts) when is_list(opts) do
+    mcp_mod = AgentWorkshop.MCP
+
+    if Code.ensure_loaded?(mcp_mod) do
+      case mcp_mod.start(opts) do
+        {:ok, _pid} ->
+          port = Keyword.get(opts, :port, 4222)
+          print_info("MCP server started on port #{port}")
+          :ok
+
+        {:error, {:already_started, _pid}} ->
+          :ok
+
+        {:error, reason} ->
+          print_error("MCP server failed to start: #{inspect(reason)}")
+          {:error, reason}
+      end
+    else
+      print_error("MCP server requires anubis_mcp, bandit, and plug deps.")
+      {:error, :deps_missing}
+    end
+  end
+
   # ── Interaction ───────────────────────────────────────────────
 
   @doc """
