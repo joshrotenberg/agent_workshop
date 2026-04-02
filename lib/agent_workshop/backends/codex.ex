@@ -4,7 +4,7 @@ defmodule AgentWorkshop.Backends.Codex do
 
   Requires the `codex_wrapper` package:
 
-      {:codex_wrapper, "~> 0.1"}
+      {:codex_wrapper, "~> 0.2"}
 
   ## Usage
 
@@ -20,44 +20,34 @@ defmodule AgentWorkshop.Backends.Codex do
   @impl true
   def start_session(config, opts) do
     ensure_codex_wrapper!()
-
-    apply(CodexWrapper.SessionServer, :start_link, [
-      [config: config, exec_opts: opts]
-    ])
+    CodexWrapper.SessionServer.start_link(config: config, exec_opts: opts)
   end
 
   @impl true
   def send_message(server, prompt, opts) do
-    case apply(CodexWrapper.SessionServer, :send_message, [server, prompt, opts]) do
+    case CodexWrapper.SessionServer.send_message(server, prompt, opts) do
       {:ok, result} -> {:ok, normalize_result(result)}
       {:error, _} = err -> err
     end
   end
 
   @impl true
-  def session_id(server) do
-    apply(CodexWrapper.SessionServer, :session_id, [server])
-  end
+  def session_id(server), do: CodexWrapper.SessionServer.session_id(server)
 
   @impl true
   def history(server) do
-    apply(CodexWrapper.SessionServer, :history, [server])
-    |> Enum.map(&normalize_result/1)
+    server |> CodexWrapper.SessionServer.history() |> Enum.map(&normalize_result/1)
   end
 
   @impl true
-  def total_cost(server) do
-    apply(CodexWrapper.SessionServer, :total_cost, [server])
-  end
+  def total_cost(server), do: CodexWrapper.SessionServer.total_cost(server)
 
   @impl true
-  def turn_count(server) do
-    apply(CodexWrapper.SessionServer, :turn_count, [server])
-  end
+  def turn_count(server), do: CodexWrapper.SessionServer.turn_count(server)
 
   @impl true
   def last_result(server) do
-    case apply(CodexWrapper.SessionServer, :last_result, [server]) do
+    case CodexWrapper.SessionServer.last_result(server) do
       nil -> nil
       result -> normalize_result(result)
     end
@@ -84,10 +74,7 @@ defmodule AgentWorkshop.Backends.Codex do
 
   defp ensure_codex_wrapper! do
     unless Code.ensure_loaded?(CodexWrapper.SessionServer) do
-      raise """
-      CodexWrapper is required for the Codex backend.
-      Add {:codex_wrapper, "~> 0.1"} to your deps.
-      """
+      raise "CodexWrapper is required. Add {:codex_wrapper, \"~> 0.2\"} to your deps."
     end
   end
 end

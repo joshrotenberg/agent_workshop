@@ -435,8 +435,8 @@ if Code.ensure_loaded?(Anubis.Server) do
       @moduledoc false
       use Plug.Router
 
-      alias Anubis.Server.Transport.StreamableHTTP
       alias AgentWorkshop.MCP, as: WorkshopMCP
+      alias Anubis.Server.Transport.StreamableHTTP
 
       plug(:match)
       plug(:dispatch)
