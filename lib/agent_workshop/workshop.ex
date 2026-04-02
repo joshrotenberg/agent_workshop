@@ -1382,7 +1382,14 @@ defmodule AgentWorkshop.Workshop do
   def info(name) do
     ensure_started()
     entry = get_agent!(name)
-    session_id = entry.backend.session_id(entry.pid)
+
+    # Pull session_id from last result if available.
+    # Do NOT call backend.session_id — it blocks if the agent is busy.
+    session_id =
+      case entry.last_result do
+        %{session_id: sid} -> sid
+        _ -> nil
+      end
 
     %{
       name: name,
