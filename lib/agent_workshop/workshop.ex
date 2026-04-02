@@ -74,7 +74,7 @@ defmodule AgentWorkshop.Workshop do
         `-- Task.Supervisor (async tasks for cast/2)
   """
 
-  alias AgentWorkshop.{Budget, PubSub, Scheduler, Store, Telemetry}
+  alias AgentWorkshop.{Budget, PubSub, Scheduler, Store, Telemetry, Work}
 
   @table :agent_workshop_agents
   @state :agent_workshop_state
@@ -125,6 +125,7 @@ defmodule AgentWorkshop.Workshop do
 
       AgentWorkshop.Store.create_table()
       AgentWorkshop.Budget.create_table()
+      AgentWorkshop.Work.create_table()
       default_state()
     end
 
@@ -164,6 +165,7 @@ defmodule AgentWorkshop.Workshop do
 
     AgentWorkshop.Store.delete_table()
     AgentWorkshop.Budget.delete_table()
+    AgentWorkshop.Work.delete_table()
 
     :ok
   end
@@ -760,6 +762,168 @@ defmodule AgentWorkshop.Workshop do
     Budget.clear()
     print_info("Budgets cleared.")
     :ok
+  end
+
+  # ── Work Board ────────────────────────────────────────────────
+
+  @doc """
+  Add a work item to the board.
+
+  ## Options
+
+    * `:type` - work type (`:code`, `:review`, `:test`, `:docs`, `:deploy`, `:triage`, `:custom`)
+    * `:spec` - detailed specification
+    * `:priority` - 1 (highest) to 5 (lowest), default 3
+    * `:depends_on` - list of work item IDs that must complete first
+
+  ## Examples
+
+      work(:cache, "Implement LRU cache",
+        type: :code, priority: 1,
+        spec: "LRU cache with configurable max size and TTL per entry")
+
+      work(:cache_review, "Review cache implementation",
+        type: :review, depends_on: [:cache])
+  """
+  @spec work(atom(), String.t(), keyword()) :: :ok
+  def work(id, title, opts \\ []) do
+    ensure_started()
+    Work.add(id, title, opts)
+  end
+
+  @doc """
+  Show the work board. Optionally filter by status or type.
+
+  ## Examples
+
+      board()                    # full board
+      board(status: :ready)      # items ready to pick up
+      board(type: :code)         # only code tasks
+  """
+  @spec board(keyword()) :: :ok
+  def board(filters \\ []) do
+    ensure_started()
+    items = Work.list(filters)
+
+    if items == [] do
+      print_info("Board is empty.")
+    else
+      Enum.each(items, &print_work_item/1)
+
+      summary = Work.summary()
+      parts = Enum.map_join(summary, ", ", fn {status, count} -> "#{status}: #{count}" end)
+      print_info(parts)
+    end
+
+    :ok
+  end
+
+  @doc """
+  Claim a work item for an agent.
+
+  ## Example
+
+      claim(:cache, :impl)
+  """
+  @spec claim_work(atom(), atom()) :: :ok | {:error, term()}
+  def claim_work(id, agent_name) do
+    ensure_started()
+    get_agent!(agent_name)
+
+    case Work.claim(id, agent_name) do
+      :ok ->
+        print_info("#{inspect(agent_name)} claimed #{inspect(id)}")
+        :ok
+
+      {:error, reason} ->
+        print_error("Cannot claim #{inspect(id)}: #{inspect(reason)}")
+        {:error, reason}
+    end
+  end
+
+  @doc """
+  Mark a work item as in progress.
+  """
+  @spec start_work(atom()) :: :ok | {:error, term()}
+  def start_work(id) do
+    ensure_started()
+
+    case Work.start_work(id) do
+      :ok ->
+        :ok
+
+      {:error, reason} ->
+        print_error("Cannot start #{inspect(id)}: #{inspect(reason)}")
+        {:error, reason}
+    end
+  end
+
+  @doc """
+  Mark a work item as done. Unblocks any dependents.
+
+  ## Examples
+
+      complete_work(:cache)
+      complete_work(:cache, "Implemented with GenServer-backed LRU")
+  """
+  @spec complete_work(atom(), String.t() | nil) :: :ok | {:error, term()}
+  def complete_work(id, result \\ nil) do
+    ensure_started()
+
+    case Work.complete(id, result) do
+      :ok ->
+        print_info("#{inspect(id)} done.")
+        :ok
+
+      {:error, reason} ->
+        print_error("Cannot complete #{inspect(id)}: #{inspect(reason)}")
+        {:error, reason}
+    end
+  end
+
+  @doc """
+  Mark a work item as failed.
+  """
+  @spec fail_work(atom(), String.t() | nil) :: :ok | {:error, term()}
+  def fail_work(id, error \\ nil) do
+    ensure_started()
+
+    case Work.fail(id, error) do
+      :ok ->
+        print_error("#{inspect(id)} failed: #{error || "no reason"}")
+        :ok
+
+      {:error, reason} ->
+        print_error("Cannot fail #{inspect(id)}: #{inspect(reason)}")
+        {:error, reason}
+    end
+  end
+
+  @doc """
+  Cancel a work item.
+  """
+  @spec cancel_work(atom()) :: :ok | {:error, term()}
+  def cancel_work(id) do
+    ensure_started()
+
+    case Work.cancel(id) do
+      :ok ->
+        print_info("#{inspect(id)} cancelled.")
+        :ok
+
+      {:error, reason} ->
+        print_error("Cannot cancel #{inspect(id)}: #{inspect(reason)}")
+        {:error, reason}
+    end
+  end
+
+  @doc """
+  Get details of a specific work item.
+  """
+  @spec work_item(atom()) :: Work.t() | nil
+  def work_item(id) do
+    ensure_started()
+    Work.get(id)
   end
 
   # ── Interaction ───────────────────────────────────────────────
@@ -1449,6 +1613,27 @@ defmodule AgentWorkshop.Workshop do
 
   defp plural(1), do: ""
   defp plural(_), do: "s"
+
+  defp print_work_item(item) do
+    status_color =
+      case item.status do
+        :done -> IO.ANSI.green()
+        :failed -> IO.ANSI.red()
+        :in_progress -> IO.ANSI.yellow()
+        :ready -> IO.ANSI.cyan()
+        :blocked -> IO.ANSI.light_black()
+        _ -> ""
+      end
+
+    claimed = if item.claimed_by, do: " (#{item.claimed_by})", else: ""
+    deps = if item.depends_on != [], do: " deps: #{inspect(item.depends_on)}", else: ""
+
+    IO.puts(
+      "  #{status_color}[#{item.status}]#{IO.ANSI.reset()} " <>
+        "#{inspect(item.id)} - #{item.title}" <>
+        " [#{item.type}]#{claimed}#{deps}"
+    )
+  end
 
   defp print_schedule_info(info) do
     last =

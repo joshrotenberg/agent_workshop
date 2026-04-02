@@ -523,4 +523,158 @@ defmodule AgentWorkshop.WorkshopTest do
       assert info.limit == nil
     end
   end
+
+  describe "work board" do
+    test "add and list work items" do
+      setup_mock()
+      Workshop.work(:cache, "Implement cache", type: :code)
+      Workshop.work(:tests, "Write tests", type: :test)
+      items = AgentWorkshop.Work.list()
+      assert length(items) == 2
+    end
+
+    test "items without deps start as ready" do
+      setup_mock()
+      Workshop.work(:cache, "Implement cache", type: :code)
+      item = Workshop.work_item(:cache)
+      assert item.status == :ready
+    end
+
+    test "items with unmet deps start as new" do
+      setup_mock()
+      Workshop.work(:cache, "Implement cache", type: :code)
+      Workshop.work(:review, "Review cache", type: :review, depends_on: [:cache])
+      item = Workshop.work_item(:review)
+      assert item.status == :new
+    end
+
+    test "completing a dep unblocks dependents" do
+      setup_mock()
+      Workshop.agent(:impl, "Coder")
+      Workshop.work(:cache, "Implement cache", type: :code)
+      Workshop.work(:review, "Review cache", type: :review, depends_on: [:cache])
+
+      assert Workshop.work_item(:review).status == :new
+
+      Workshop.claim_work(:cache, :impl)
+      Workshop.start_work(:cache)
+      Workshop.complete_work(:cache)
+
+      assert Workshop.work_item(:review).status == :ready
+    end
+
+    test "claim and start workflow" do
+      setup_mock()
+      Workshop.agent(:impl, "Coder")
+      Workshop.work(:cache, "Implement cache", type: :code)
+
+      assert :ok = Workshop.claim_work(:cache, :impl)
+      assert Workshop.work_item(:cache).claimed_by == :impl
+      assert Workshop.work_item(:cache).status == :claimed
+
+      assert :ok = Workshop.start_work(:cache)
+      assert Workshop.work_item(:cache).status == :in_progress
+    end
+
+    test "complete sets done and timestamp" do
+      setup_mock()
+      Workshop.agent(:impl, "Coder")
+      Workshop.work(:cache, "Implement cache", type: :code)
+      Workshop.claim_work(:cache, :impl)
+      Workshop.complete_work(:cache, "Done with GenServer")
+
+      item = Workshop.work_item(:cache)
+      assert item.status == :done
+      assert item.result == "Done with GenServer"
+      assert item.completed_at != nil
+    end
+
+    test "fail blocks dependents" do
+      setup_mock()
+      Workshop.agent(:impl, "Coder")
+      Workshop.work(:cache, "Implement cache", type: :code)
+      Workshop.work(:review, "Review", type: :review, depends_on: [:cache])
+
+      Workshop.claim_work(:cache, :impl)
+      Workshop.fail_work(:cache, "tests broken")
+
+      assert Workshop.work_item(:cache).status == :failed
+      assert Workshop.work_item(:review).status == :blocked
+    end
+
+    test "cancel work" do
+      setup_mock()
+      Workshop.work(:cache, "Implement cache", type: :code)
+      Workshop.cancel_work(:cache)
+      assert Workshop.work_item(:cache).status == :cancelled
+    end
+
+    test "filter by status" do
+      setup_mock()
+      Workshop.work(:a, "Task A", type: :code)
+      Workshop.work(:b, "Task B", type: :code)
+      Workshop.work(:c, "Task C", type: :review, depends_on: [:a])
+
+      ready = AgentWorkshop.Work.list(status: :ready)
+      assert length(ready) == 2
+      assert Enum.all?(ready, &(&1.status == :ready))
+    end
+
+    test "filter by type" do
+      setup_mock()
+      Workshop.work(:a, "Code task", type: :code)
+      Workshop.work(:b, "Review task", type: :review)
+
+      code_items = AgentWorkshop.Work.list(type: :code)
+      assert length(code_items) == 1
+      assert hd(code_items).type == :code
+    end
+
+    test "board display works" do
+      setup_mock()
+      Workshop.work(:cache, "Implement cache", type: :code)
+      assert :ok = Workshop.board()
+    end
+
+    test "board display with empty board" do
+      setup_mock()
+      assert :ok = Workshop.board()
+    end
+
+    test "priority ordering" do
+      setup_mock()
+      Workshop.work(:low, "Low priority", type: :code, priority: 5)
+      Workshop.work(:high, "High priority", type: :code, priority: 1)
+      Workshop.work(:mid, "Mid priority", type: :code, priority: 3)
+
+      items = AgentWorkshop.Work.list()
+      assert Enum.map(items, & &1.id) == [:high, :mid, :low]
+    end
+
+    test "pubsub events on work state changes" do
+      setup_mock()
+      Workshop.agent(:impl, "Coder")
+      AgentWorkshop.PubSub.subscribe(:work)
+
+      Workshop.work(:cache, "Implement cache", type: :code)
+      assert_receive {:workshop_event, :work, {:work, :added, :cache}}, 1000
+
+      Workshop.claim_work(:cache, :impl)
+      assert_receive {:workshop_event, :work, {:work, :claimed, :cache, :impl}}, 1000
+
+      Workshop.complete_work(:cache)
+      assert_receive {:workshop_event, :work, {:work, :completed, :cache}}, 1000
+    end
+
+    test "summary counts" do
+      setup_mock()
+      Workshop.work(:a, "A", type: :code)
+      Workshop.work(:b, "B", type: :code)
+      Workshop.work(:c, "C", type: :review, depends_on: [:a])
+
+      summary = AgentWorkshop.Work.summary()
+      assert summary[:ready] == 2
+      assert summary[:new] == 1
+    end
+  end
 end
