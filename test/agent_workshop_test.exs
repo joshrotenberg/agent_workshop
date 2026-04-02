@@ -448,6 +448,41 @@ defmodule AgentWorkshop.WorkshopTest do
     end
   end
 
+  describe "event log" do
+    test "records agent events" do
+      setup_mock()
+      Workshop.agent(:impl, "Coder")
+      Workshop.ask(:impl, "hello")
+
+      entries = AgentWorkshop.EventLog.recent()
+      formatted = Enum.map(entries, & &1.formatted) |> Enum.reject(&is_nil/1)
+
+      assert Enum.any?(formatted, &String.contains?(&1, "impl created"))
+      assert Enum.any?(formatted, &String.contains?(&1, "impl complete"))
+    end
+
+    test "watch and unwatch" do
+      setup_mock()
+      assert :ok = Workshop.watch()
+      assert AgentWorkshop.EventLog.watching?()
+      assert :ok = Workshop.unwatch()
+      refute AgentWorkshop.EventLog.watching?()
+    end
+
+    test "events/0 displays" do
+      setup_mock()
+      Workshop.agent(:impl, "Coder")
+      assert :ok = Workshop.events()
+    end
+
+    test "clear_events/0 clears" do
+      setup_mock()
+      Workshop.agent(:impl, "Coder")
+      Workshop.clear_events()
+      assert AgentWorkshop.EventLog.recent() == []
+    end
+  end
+
   describe "scheduling" do
     test "every/3 creates a schedule" do
       setup_mock()
