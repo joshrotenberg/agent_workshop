@@ -544,16 +544,22 @@ defmodule AgentWorkshop.Workshop do
     mcp_mod = AgentWorkshop.MCP
 
     if Code.ensure_loaded?(mcp_mod) do
-      case mcp_mod.start(opts) do
-        {:ok, _pid} ->
-          port = Keyword.get(opts, :port, 4222)
-          print_info("MCP server started on port #{port}")
-          :ok
+      try do
+        case mcp_mod.start(opts) do
+          {:ok, _pid} ->
+            port = Keyword.get(opts, :port, 4222)
+            print_info("MCP server started on port #{port}")
+            :ok
 
-        {:error, {:already_started, _pid}} ->
-          :ok
+          {:error, {:already_started, _pid}} ->
+            :ok
 
-        {:error, reason} ->
+          {:error, reason} ->
+            print_error("MCP server failed to start: #{inspect(reason)}")
+            {:error, reason}
+        end
+      catch
+        :exit, reason ->
           print_error("MCP server failed to start: #{inspect(reason)}")
           {:error, reason}
       end

@@ -25,6 +25,8 @@ defmodule AgentWorkshop.MixProject do
   defp deps do
     [
       {:jason, "~> 1.4"},
+      {:claude_wrapper, path: "../claude_wrapper_ex"},
+      {:codex_wrapper, path: "../codex_wrapper_ex"},
       {:anubis_mcp, "~> 1.0", optional: true},
       {:bandit, "~> 1.0", optional: true},
       {:plug, "~> 1.16", optional: true},
