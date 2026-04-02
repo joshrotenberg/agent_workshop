@@ -106,6 +106,17 @@ defmodule AgentWorkshop.BoardWorker do
     {:noreply, %{state | timer_ref: timer_ref}}
   end
 
+  # Task result messages from cast — ignore (watcher handles completion)
+  def handle_info({ref, _result}, state) when is_reference(ref) do
+    Process.demonitor(ref, [:flush])
+    {:noreply, state}
+  end
+
+  # Task DOWN messages
+  def handle_info({:DOWN, _ref, :process, _pid, _reason}, state) do
+    {:noreply, state}
+  end
+
   @impl true
   def handle_call(:info, _from, state) do
     info = %{
