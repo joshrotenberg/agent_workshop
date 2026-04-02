@@ -32,6 +32,7 @@ defmodule AgentWorkshop.BoardWorker do
     :work_type,
     :interval,
     :timer_ref,
+    worktree: false,
     claims_completed: 0,
     current_item: nil
   ]
@@ -88,11 +89,13 @@ defmodule AgentWorkshop.BoardWorker do
     agent_name = Keyword.fetch!(opts, :agent_name)
     work_type = Keyword.fetch!(opts, :work_type)
     interval = Keyword.fetch!(opts, :interval)
+    worktree = Keyword.get(opts, :worktree, false)
 
     state = %__MODULE__{
       agent_name: agent_name,
       work_type: work_type,
-      interval: interval
+      interval: interval,
+      worktree: worktree
     }
 
     timer_ref = Process.send_after(self(), :poll, interval)
@@ -123,6 +126,7 @@ defmodule AgentWorkshop.BoardWorker do
       agent_name: state.agent_name,
       work_type: state.work_type,
       interval: state.interval,
+      worktree: state.worktree,
       claims_completed: state.claims_completed,
       current_item: state.current_item
     }

@@ -1081,6 +1081,8 @@ defmodule AgentWorkshop.Workshop do
 
     * `:profile` - (required) profile name to create the agent from
     * `:interval` - poll interval in ms (default: 60_000 / 1 min)
+    * `:worktree` - when `true`, passes `worktree: true` to the agent's query opts,
+      enabling the Claude CLI `--worktree` flag for isolated parallel execution
 
   ## Examples
 
@@ -1096,15 +1098,16 @@ defmodule AgentWorkshop.Workshop do
 
     profile_name = Keyword.fetch!(opts, :profile)
     interval = Keyword.get(opts, :interval, 60_000)
+    worktree = Keyword.get(opts, :worktree, false)
 
-    # Create the agent from profile
+    # Create the agent from profile, threading worktree into query_opts
     from_profile(profile_name, name, Keyword.drop(opts, [:profile, :interval]))
 
     # Start the board worker loop
     {:ok, _pid} =
       DynamicSupervisor.start_child(@sessions_sup, {
         AgentWorkshop.BoardWorker,
-        agent_name: name, work_type: work_type, interval: interval
+        agent_name: name, work_type: work_type, interval: interval, worktree: worktree
       })
 
     print_info(
