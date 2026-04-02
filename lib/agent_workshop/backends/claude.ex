@@ -4,7 +4,7 @@ defmodule AgentWorkshop.Backends.Claude do
 
   Requires the `claude_wrapper` package:
 
-      {:claude_wrapper, "~> 0.5"}
+      {:claude_wrapper, "~> 0.3"}
 
   ## Usage
 
@@ -20,44 +20,34 @@ defmodule AgentWorkshop.Backends.Claude do
   @impl true
   def start_session(config, opts) do
     ensure_claude_wrapper!()
-
-    apply(ClaudeWrapper.SessionServer, :start_link, [
-      [config: config, query_opts: opts]
-    ])
+    ClaudeWrapper.SessionServer.start_link(config: config, query_opts: opts)
   end
 
   @impl true
   def send_message(server, prompt, opts) do
-    case apply(ClaudeWrapper.SessionServer, :send_message, [server, prompt, opts]) do
+    case ClaudeWrapper.SessionServer.send_message(server, prompt, opts) do
       {:ok, result} -> {:ok, normalize_result(result)}
       {:error, _} = err -> err
     end
   end
 
   @impl true
-  def session_id(server) do
-    apply(ClaudeWrapper.SessionServer, :session_id, [server])
-  end
+  def session_id(server), do: ClaudeWrapper.SessionServer.session_id(server)
 
   @impl true
   def history(server) do
-    apply(ClaudeWrapper.SessionServer, :history, [server])
-    |> Enum.map(&normalize_result/1)
+    server |> ClaudeWrapper.SessionServer.history() |> Enum.map(&normalize_result/1)
   end
 
   @impl true
-  def total_cost(server) do
-    apply(ClaudeWrapper.SessionServer, :total_cost, [server])
-  end
+  def total_cost(server), do: ClaudeWrapper.SessionServer.total_cost(server)
 
   @impl true
-  def turn_count(server) do
-    apply(ClaudeWrapper.SessionServer, :turn_count, [server])
-  end
+  def turn_count(server), do: ClaudeWrapper.SessionServer.turn_count(server)
 
   @impl true
   def last_result(server) do
-    case apply(ClaudeWrapper.SessionServer, :last_result, [server]) do
+    case ClaudeWrapper.SessionServer.last_result(server) do
       nil -> nil
       result -> normalize_result(result)
     end
@@ -71,7 +61,6 @@ defmodule AgentWorkshop.Backends.Claude do
     :exit, _ -> :ok
   end
 
-  # Convert ClaudeWrapper.Result struct to the Backend result map
   defp normalize_result(result) do
     %{
       result: Map.get(result, :result, ""),
@@ -85,10 +74,7 @@ defmodule AgentWorkshop.Backends.Claude do
 
   defp ensure_claude_wrapper! do
     unless Code.ensure_loaded?(ClaudeWrapper.SessionServer) do
-      raise """
-      ClaudeWrapper is required for the Claude backend.
-      Add {:claude_wrapper, "~> 0.5"} to your deps.
-      """
+      raise "ClaudeWrapper is required. Add {:claude_wrapper, \"~> 0.3\"} to your deps."
     end
   end
 end
