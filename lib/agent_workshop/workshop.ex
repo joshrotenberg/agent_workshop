@@ -133,7 +133,8 @@ defmodule AgentWorkshop.Workshop do
     children = [
       %{id: @state, start: {Agent, :start_link, [agent_init, [name: @state]]}},
       {DynamicSupervisor, name: @sessions_sup, strategy: :one_for_one},
-      {Task.Supervisor, name: @tasks_sup}
+      {Task.Supervisor, name: @tasks_sup},
+      AgentWorkshop.EventLog
     ]
 
     case Supervisor.start_link(children, strategy: :one_for_one, name: @supervisor) do
@@ -660,6 +661,75 @@ defmodule AgentWorkshop.Workshop do
         end)
     end
 
+    :ok
+  end
+
+  # ── Event Log ─────────────────────────────────────────────────
+
+  @doc """
+  Start printing live events to the console.
+
+  Shows agent creation/dismissal, ask/cast completions with cost,
+  work board changes, errors, and more.
+
+  ## Example
+
+      watch()
+      cast(:impl, "do something")
+      # [agent] impl created
+      # [cast] impl complete ($0.04) — Here is the implementation...
+  """
+  @spec watch() :: :ok
+  def watch do
+    AgentWorkshop.EventLog.watch()
+    print_info("Watching events. Use unwatch() to stop.")
+    :ok
+  end
+
+  @doc """
+  Stop printing live events.
+  """
+  @spec unwatch() :: :ok
+  def unwatch do
+    AgentWorkshop.EventLog.unwatch()
+    print_info("Stopped watching.")
+    :ok
+  end
+
+  @doc """
+  Show recent events.
+
+  ## Options
+
+    * `:last` - number of events to show (default 20)
+
+  ## Examples
+
+      events()            # last 20
+      events(last: 50)    # last 50
+  """
+  @spec events(keyword()) :: :ok
+  def events(opts \\ []) do
+    ensure_started()
+    entries = AgentWorkshop.EventLog.recent(opts)
+
+    if entries == [] do
+      print_info("No events recorded.")
+    else
+      entries
+      |> Enum.filter(& &1.formatted)
+      |> Enum.each(&print_event/1)
+    end
+
+    :ok
+  end
+
+  @doc """
+  Clear event history.
+  """
+  @spec clear_events() :: :ok
+  def clear_events do
+    AgentWorkshop.EventLog.clear()
     :ok
   end
 
@@ -1712,6 +1782,11 @@ defmodule AgentWorkshop.Workshop do
 
   defp plural(1), do: ""
   defp plural(_), do: "s"
+
+  defp print_event(entry) do
+    time = Calendar.strftime(entry.timestamp, "%H:%M:%S")
+    IO.puts(IO.ANSI.light_black() <> "#{time} #{entry.formatted}" <> IO.ANSI.reset())
+  end
 
   defp print_profile({name, %{role: role, opts: opts}}) do
     model = Keyword.get(opts, :model, "default")
