@@ -74,7 +74,7 @@ defmodule AgentWorkshop.Workshop do
         `-- Task.Supervisor (async tasks for cast/2)
   """
 
-  alias AgentWorkshop.{Budget, PubSub, Scheduler, Store, Telemetry, Work}
+  alias AgentWorkshop.{Budget, Profiles, PubSub, Scheduler, Store, Telemetry, Work}
 
   @table :agent_workshop_agents
   @state :agent_workshop_state
@@ -82,7 +82,7 @@ defmodule AgentWorkshop.Workshop do
   @tasks_sup AgentWorkshop.Workshop.TasksSupervisor
   @supervisor AgentWorkshop.Workshop.Supervisor
 
-  @special_keys [:backend, :backend_config, :context]
+  @special_keys [:backend, :backend_config, :context, :workshop_tools, :max_cost_usd]
   @max_queue_size 5
   @valid_permission_modes [:default, :accept_edits, :bypass_permissions, :dont_ask, :plan, :auto]
 
@@ -126,6 +126,7 @@ defmodule AgentWorkshop.Workshop do
       AgentWorkshop.Store.create_table()
       AgentWorkshop.Budget.create_table()
       AgentWorkshop.Work.create_table()
+      AgentWorkshop.Profiles.create_table()
       default_state()
     end
 
@@ -166,6 +167,7 @@ defmodule AgentWorkshop.Workshop do
     AgentWorkshop.Store.delete_table()
     AgentWorkshop.Budget.delete_table()
     AgentWorkshop.Work.delete_table()
+    AgentWorkshop.Profiles.delete_table()
 
     :ok
   end
@@ -322,11 +324,26 @@ defmodule AgentWorkshop.Workshop do
     # Compose system prompt: global context + agent role
     system_prompt = compose_system_prompt(global.context, role)
 
+    # Extract special opts
+    {workshop_tools, opts} = Keyword.pop(opts, :workshop_tools, false)
+    {agent_max_cost, opts} = Keyword.pop(opts, :max_cost_usd)
+
     # Merge global query opts with agent-specific opts (agent wins)
     agent_query_opts = split_opts(opts)
-    {agent_max_cost, agent_query_opts} = Keyword.pop(agent_query_opts, :max_cost_usd)
     validate_opts!(agent_query_opts)
     query_opts = Keyword.merge(global.query_opts, agent_query_opts)
+
+    # If workshop_tools: true, inject MCP config so agent can orchestrate
+    query_opts =
+      if workshop_tools do
+        mcp_path = write_workshop_mcp_config()
+
+        Keyword.update(query_opts, :mcp_config, [mcp_path], fn paths ->
+          paths ++ [mcp_path]
+        end)
+      else
+        query_opts
+      end
 
     query_opts =
       if system_prompt do
@@ -761,6 +778,66 @@ defmodule AgentWorkshop.Workshop do
   def reset_budget do
     Budget.clear()
     print_info("Budgets cleared.")
+    :ok
+  end
+
+  # ── Profiles ──────────────────────────────────────────────────
+
+  @doc """
+  Define a reusable agent profile (template).
+
+  ## Examples
+
+      profile(:coder, "You write clean code.", max_turns: 15)
+      profile(:reviewer, "Review only.", model: "opus", allowed_tools: ["Read", "Bash"])
+  """
+  @spec profile(atom(), String.t() | nil, keyword()) :: :ok
+  def profile(name, role \\ nil, opts \\ []) do
+    ensure_started()
+    Profiles.define(name, role, opts)
+  end
+
+  @doc """
+  Create an agent from a profile.
+
+  ## Examples
+
+      profile(:coder, "You write code.", max_turns: 15)
+      from_profile(:coder, :coder_bug_42)
+      from_profile(:coder, :coder_feature_7, max_turns: 25)  # override opts
+  """
+  @spec from_profile(atom(), atom(), keyword()) :: :ok
+  def from_profile(profile_name, agent_name, overrides \\ []) do
+    ensure_started()
+
+    case Profiles.get(profile_name) do
+      nil ->
+        raise ArgumentError,
+              "unknown profile #{inspect(profile_name)}. Define it with profile/3."
+
+      %{role: role, opts: base_opts} ->
+        merged_opts = Keyword.merge(base_opts, overrides)
+        agent(agent_name, role, merged_opts)
+    end
+  end
+
+  @doc """
+  List available profiles.
+  """
+  @spec profiles() :: :ok
+  def profiles do
+    ensure_started()
+    names = Profiles.list()
+
+    if names == [] do
+      print_info("No profiles defined.")
+    else
+      names
+      |> Enum.map(&{&1, Profiles.get(&1)})
+      |> Enum.reject(fn {_, v} -> is_nil(v) end)
+      |> Enum.each(&print_profile/1)
+    end
+
     :ok
   end
 
@@ -1541,6 +1618,28 @@ defmodule AgentWorkshop.Workshop do
     :ets.insert(@table, {name, entry})
   end
 
+  defp write_workshop_mcp_config do
+    port =
+      if Code.ensure_loaded?(AgentWorkshop.MCP) do
+        :persistent_term.get({AgentWorkshop.MCP, :port}, 4222)
+      else
+        4222
+      end
+
+    config = %{
+      "mcpServers" => %{
+        "workshop" => %{
+          "type" => "http",
+          "url" => "http://localhost:#{port}/mcp"
+        }
+      }
+    }
+
+    path = Path.join(System.tmp_dir!(), "workshop_mcp_#{:erlang.phash2(self())}.json")
+    File.write!(path, Jason.encode!(config))
+    path
+  end
+
   # ── Internal: Helpers ─────────────────────────────────────────
 
   defp split_opts(opts) do
@@ -1613,6 +1712,11 @@ defmodule AgentWorkshop.Workshop do
 
   defp plural(1), do: ""
   defp plural(_), do: "s"
+
+  defp print_profile({name, %{role: role, opts: opts}}) do
+    model = Keyword.get(opts, :model, "default")
+    print_info("#{inspect(name)}: #{role || "(no role)"} [#{model}]")
+  end
 
   defp print_work_item(item) do
     status_color =

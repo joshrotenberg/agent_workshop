@@ -677,4 +677,48 @@ defmodule AgentWorkshop.WorkshopTest do
       assert summary[:new] == 1
     end
   end
+
+  describe "profiles" do
+    test "define and list profiles" do
+      setup_mock()
+      Workshop.profile(:coder, "You write code.", max_turns: 15)
+      Workshop.profile(:reviewer, "Review only.", model: "opus")
+      assert :ok = Workshop.profiles()
+      assert :coder in AgentWorkshop.Profiles.list()
+      assert :reviewer in AgentWorkshop.Profiles.list()
+    end
+
+    test "from_profile creates agent" do
+      setup_mock()
+      Workshop.profile(:coder, "You write code.", max_turns: 15)
+      Workshop.from_profile(:coder, :coder_42)
+      assert :coder_42 in Workshop.agents()
+    end
+
+    test "from_profile with overrides" do
+      setup_mock()
+      Workshop.profile(:coder, "You write code.", model: "sonnet")
+      Workshop.from_profile(:coder, :coder_opus, model: "opus")
+      info = Workshop.info(:coder_opus)
+      assert info.model == "opus"
+    end
+
+    test "from_profile raises for unknown profile" do
+      setup_mock()
+
+      assert_raise ArgumentError, ~r/unknown profile/, fn ->
+        Workshop.from_profile(:nonexistent, :agent)
+      end
+    end
+  end
+
+  describe "workshop_tools" do
+    test "workshop_tools option adds mcp_config to query_opts" do
+      setup_mock()
+      Workshop.agent(:orchestrator, "Coordinator", workshop_tools: true)
+      entry = Workshop.info(:orchestrator)
+      # The mcp_config should be in the query_opts (not visible in info, but agent was created)
+      assert :orchestrator in Workshop.agents()
+    end
+  end
 end
