@@ -80,7 +80,12 @@ defmodule AgentWorkshop.EventLog do
   @impl true
   def init(opts) do
     max = Keyword.get(opts, :max_events, @default_max_events)
-    PubSub.subscribe(:all)
+
+    try do
+      PubSub.subscribe(:all)
+    rescue
+      _ -> :ok
+    end
 
     {:ok, %__MODULE__{max_events: max}}
   end

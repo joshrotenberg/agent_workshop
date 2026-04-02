@@ -57,7 +57,10 @@ defmodule AgentWorkshop.Scheduler do
 
   @doc false
   def list_all do
-    Registry.select(@registry, [{{:"$1", :_, :_}, [], [:"$1"]}])
+    @registry
+    |> Registry.select([{{:"$1", :"$2", :_}, [], [{{:"$1", :"$2"}}]}])
+    |> Enum.filter(fn {_name, pid} -> Process.alive?(pid) end)
+    |> Enum.map(&elem(&1, 0))
     |> Enum.sort()
   end
 
