@@ -109,6 +109,14 @@ defmodule AgentWorkshop.BoardWorker do
     {:noreply, %{state | timer_ref: timer_ref}}
   end
 
+  def handle_info({:work_done, _item_id}, state) do
+    {:noreply, %{state | claims_completed: state.claims_completed + 1, current_item: nil}}
+  end
+
+  def handle_info({:work_failed, _item_id}, state) do
+    {:noreply, %{state | claims_completed: state.claims_completed + 1, current_item: nil}}
+  end
+
   # Task result messages from cast — ignore (watcher handles completion)
   def handle_info({ref, _result}, state) when is_reference(ref) do
     Process.demonitor(ref, [:flush])
@@ -184,12 +192,13 @@ defmodule AgentWorkshop.BoardWorker do
     Workshop.cast(state.agent_name, prompt)
 
     # Spawn a watcher that waits for the agent to finish and marks the item
-    spawn(fn -> watch_completion(state.agent_name, item.id) end)
+    worker_pid = self()
+    spawn(fn -> watch_completion(state.agent_name, item.id, worker_pid) end)
 
     %{state | current_item: item.id}
   end
 
-  defp watch_completion(agent_name, item_id) do
+  defp watch_completion(agent_name, item_id, worker_pid) do
     Process.sleep(2_000)
 
     case Workshop.info(agent_name) do
@@ -198,15 +207,19 @@ defmodule AgentWorkshop.BoardWorker do
         Work.complete(item_id, result_text)
         Telemetry.event(:board_worker_completed, %{}, %{agent: agent_name, item: item_id})
         PubSub.broadcast({:board_worker, :completed, agent_name, item_id})
+        send(worker_pid, {:work_done, item_id})
 
       %{status: :working} ->
-        watch_completion(agent_name, item_id)
+        watch_completion(agent_name, item_id, worker_pid)
 
       _ ->
         Work.fail(item_id, "agent unavailable")
+        send(worker_pid, {:work_failed, item_id})
     end
   rescue
-    _ -> Work.fail(item_id, "watcher crashed")
+    _ ->
+      Work.fail(item_id, "watcher crashed")
+      send(worker_pid, {:work_failed, item_id})
   end
 
   defp build_prompt(item) do
