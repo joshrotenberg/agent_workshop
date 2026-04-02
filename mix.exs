@@ -25,6 +25,7 @@ defmodule AgentWorkshop.MixProject do
   defp deps do
     [
       {:jason, "~> 1.4"},
+      {:telemetry, "~> 1.2"},
       # Backends -- optional, users pick what they need
       {:claude_wrapper, "~> 0.3", optional: true},
       {:codex_wrapper, "~> 0.2", optional: true},
