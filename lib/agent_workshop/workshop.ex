@@ -1785,7 +1785,7 @@ defmodule AgentWorkshop.Workshop do
 
   defp print_event(entry) do
     time = Calendar.strftime(entry.timestamp, "%H:%M:%S")
-    IO.puts(IO.ANSI.light_black() <> "#{time} #{entry.formatted}" <> IO.ANSI.reset())
+    IO.puts(IO.ANSI.cyan() <> "#{time} #{entry.formatted}" <> IO.ANSI.reset())
   end
 
   defp print_profile({name, %{role: role, opts: opts}}) do

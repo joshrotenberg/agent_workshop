@@ -126,7 +126,7 @@ defmodule AgentWorkshop.EventLog do
 
     # Print live if watching
     if state.watching and entry.formatted do
-      IO.puts(IO.ANSI.light_black() <> entry.formatted <> IO.ANSI.reset())
+      IO.puts(IO.ANSI.cyan() <> entry.formatted <> IO.ANSI.reset())
     end
 
     # Store in ring buffer
