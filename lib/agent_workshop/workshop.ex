@@ -116,6 +116,7 @@ defmodule AgentWorkshop.Workshop do
     # Start registries (before supervisor, so they're available immediately)
     AgentWorkshop.PubSub.start_registry()
     AgentWorkshop.Scheduler.start_registry()
+    AgentWorkshop.BoardWorker.start_registry()
 
     # Agent init creates ETS tables so they're owned by a supervised process
     agent_init = fn ->
@@ -1067,6 +1068,72 @@ defmodule AgentWorkshop.Workshop do
     Work.get(id)
   end
 
+  # ── Board Workers ────────────────────────────────────────────
+
+  @doc """
+  Create a board worker — an agent that polls the board for work.
+
+  Combines a profile, an agent, and a poll loop. The worker claims
+  ready items matching its work type, executes them, and marks them
+  complete.
+
+  ## Options
+
+    * `:profile` - (required) profile name to create the agent from
+    * `:interval` - poll interval in ms (default: 60_000 / 1 min)
+
+  ## Examples
+
+      board_worker(:coder_1, :code, profile: :coder, interval: :timer.minutes(1))
+      board_worker(:reviewer_1, :review, profile: :reviewer, interval: :timer.minutes(2))
+
+      # Post work — workers pick it up automatically
+      work(:feature, "Implement feature X", type: :code, spec: "...")
+  """
+  @spec board_worker(atom(), atom(), keyword()) :: :ok
+  def board_worker(name, work_type, opts \\ []) do
+    ensure_started()
+
+    profile_name = Keyword.fetch!(opts, :profile)
+    interval = Keyword.get(opts, :interval, 60_000)
+
+    # Create the agent from profile
+    from_profile(profile_name, name, Keyword.drop(opts, [:profile, :interval]))
+
+    # Start the board worker loop
+    {:ok, _pid} =
+      DynamicSupervisor.start_child(@sessions_sup, {
+        AgentWorkshop.BoardWorker,
+        agent_name: name, work_type: work_type, interval: interval
+      })
+
+    print_info(
+      "#{inspect(name)}: board worker for #{inspect(work_type)} (every #{format_interval(interval)})"
+    )
+
+    :ok
+  end
+
+  @doc """
+  List active board workers.
+  """
+  @spec workers() :: :ok
+  def workers do
+    ensure_started()
+    names = AgentWorkshop.BoardWorker.list_all()
+
+    if names == [] do
+      print_info("No board workers.")
+    else
+      names
+      |> Enum.map(&AgentWorkshop.BoardWorker.get_info/1)
+      |> Enum.reject(&is_nil/1)
+      |> Enum.each(&print_worker_info/1)
+    end
+
+    :ok
+  end
+
   # ── Interaction ───────────────────────────────────────────────
 
   @doc """
@@ -1844,6 +1911,14 @@ defmodule AgentWorkshop.Workshop do
       "  #{status_color}[#{item.status}]#{IO.ANSI.reset()} " <>
         "#{inspect(item.id)} - #{item.title}" <>
         " [#{item.type}]#{claimed}#{deps}"
+    )
+  end
+
+  defp print_worker_info(info) do
+    current = if info.current_item, do: " (working on #{inspect(info.current_item)})", else: ""
+
+    print_info(
+      "#{inspect(info.agent_name)}: #{info.work_type}, #{info.claims_completed} completed#{current}"
     )
   end
 
