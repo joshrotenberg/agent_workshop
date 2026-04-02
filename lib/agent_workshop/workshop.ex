@@ -1,5 +1,6 @@
 defmodule AgentWorkshop.Workshop do
   require Logger
+
   @moduledoc """
   Multi-agent IEx API for coordinating LLM CLI sessions.
 
@@ -83,7 +84,15 @@ defmodule AgentWorkshop.Workshop do
   @tasks_sup AgentWorkshop.Workshop.TasksSupervisor
   @supervisor AgentWorkshop.Workshop.Supervisor
 
-  @special_keys [:backend, :backend_config, :context, :workshop_tools, :skill, :max_cost_usd, :timeout]
+  @special_keys [
+    :backend,
+    :backend_config,
+    :context,
+    :workshop_tools,
+    :skill,
+    :max_cost_usd,
+    :timeout
+  ]
   @max_queue_size 5
   @valid_permission_modes [:default, :accept_edits, :bypass_permissions, :dont_ask, :plan, :auto]
 
