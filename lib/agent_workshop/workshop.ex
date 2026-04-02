@@ -215,6 +215,7 @@ defmodule AgentWorkshop.Workshop do
     {context, opts} = Keyword.pop(opts, :context)
     {backend, opts} = Keyword.pop(opts, :backend)
     {backend_config, opts} = Keyword.pop(opts, :backend_config)
+    {mcp_opts, opts} = Keyword.pop(opts, :mcp)
     query_opts = opts
     validate_opts!(query_opts)
 
@@ -235,6 +236,8 @@ defmodule AgentWorkshop.Workshop do
           context: context || state.context
       }
     end)
+
+    if mcp_opts, do: mcp_server(mcp_opts)
 
     :ok
   end
