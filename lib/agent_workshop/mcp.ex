@@ -131,6 +131,8 @@ if Code.ensure_loaded?(Anubis.Server) do
     use Anubis.Server.Component, type: :tool
     alias Anubis.Server.Response
 
+    @poll_interval 2_000
+
     schema do
       field(:agent, :string, required: true, description: "agent name to wait for")
 
@@ -144,23 +146,47 @@ if Code.ensure_loaded?(Anubis.Server) do
       atom_name = String.to_existing_atom(name)
       timeout = Map.get(params, :timeout, 120_000)
 
+      if timeout == 0 do
+        check_status(atom_name, name, frame)
+      else
+        poll_until_idle(atom_name, name, timeout, frame)
+      end
+    end
+
+    defp check_status(atom_name, name, frame) do
       info = AgentWorkshop.Workshop.info(atom_name)
 
       if info.status == :idle do
         text = AgentWorkshop.Workshop.result(atom_name) || "(no result yet)"
         {:reply, Response.text(Response.tool(), text), frame}
       else
-        if timeout == 0 do
-          {:reply,
-           Response.text(
-             Response.tool(),
-             "#{name} is still working. Call await again later, or use status to check."
-           ), frame}
-        else
-          AgentWorkshop.Workshop.await(atom_name, timeout)
+        {:reply,
+         Response.text(
+           Response.tool(),
+           "#{name} is still working. Call await again later, or use status to check."
+         ), frame}
+      end
+    end
+
+    defp poll_until_idle(atom_name, name, timeout, frame) do
+      deadline = System.monotonic_time(:millisecond) + timeout
+      do_poll(atom_name, name, deadline, frame)
+    end
+
+    defp do_poll(atom_name, name, deadline, frame) do
+      info = AgentWorkshop.Workshop.info(atom_name)
+
+      cond do
+        info.status == :idle ->
           text = AgentWorkshop.Workshop.result(atom_name) || "(no result)"
           {:reply, Response.text(Response.tool(), text), frame}
-        end
+
+        System.monotonic_time(:millisecond) >= deadline ->
+          {:reply, Response.text(Response.tool(), "#{name} timed out (still working)."), frame}
+
+        true ->
+          Process.sleep(@poll_interval)
+          do_poll(atom_name, name, deadline, frame)
       end
     end
   end
@@ -170,15 +196,28 @@ if Code.ensure_loaded?(Anubis.Server) do
     use Anubis.Server.Component, type: :tool
     alias Anubis.Server.Response
 
+    @poll_interval 2_000
+
     schema do
       field(:timeout, :integer,
-        description: "max milliseconds to wait per agent (default: 120000). 0 to just check."
+        description: "max milliseconds to wait (default: 120000). 0 to just check."
       )
     end
 
     @impl true
     def execute(params, frame) do
       timeout = Map.get(params, :timeout, 120_000)
+
+      if timeout > 0 do
+        deadline = System.monotonic_time(:millisecond) + timeout
+        poll_all_idle(deadline)
+      end
+
+      results = collect_results(AgentWorkshop.Workshop.agents())
+      {:reply, Response.text(Response.tool(), results), frame}
+    end
+
+    defp poll_all_idle(deadline) do
       agents = AgentWorkshop.Workshop.agents()
 
       any_busy? =
@@ -186,12 +225,10 @@ if Code.ensure_loaded?(Anubis.Server) do
           AgentWorkshop.Workshop.info(name).status == :working
         end)
 
-      if any_busy? and timeout > 0 do
-        AgentWorkshop.Workshop.await_all(timeout)
+      if any_busy? and System.monotonic_time(:millisecond) < deadline do
+        Process.sleep(@poll_interval)
+        poll_all_idle(deadline)
       end
-
-      results = collect_results(agents)
-      {:reply, Response.text(Response.tool(), results), frame}
     end
 
     defp collect_results(agents) do
