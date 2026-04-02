@@ -82,7 +82,7 @@ defmodule AgentWorkshop.Workshop do
   @tasks_sup AgentWorkshop.Workshop.TasksSupervisor
   @supervisor AgentWorkshop.Workshop.Supervisor
 
-  @special_keys [:backend, :backend_config, :context, :workshop_tools, :max_cost_usd]
+  @special_keys [:backend, :backend_config, :context, :workshop_tools, :skill, :max_cost_usd]
   @max_queue_size 5
   @valid_permission_modes [:default, :accept_edits, :bypass_permissions, :dont_ask, :plan, :auto]
 
@@ -322,12 +322,16 @@ defmodule AgentWorkshop.Workshop do
             "no backend configured. Call configure(backend: MyModule) first."
     end
 
-    # Compose system prompt: global context + agent role
-    system_prompt = compose_system_prompt(global.context, role)
-
     # Extract special opts
     {workshop_tools, opts} = Keyword.pop(opts, :workshop_tools, false)
+    {skill, opts} = Keyword.pop(opts, :skill)
     {agent_max_cost, opts} = Keyword.pop(opts, :max_cost_usd)
+
+    # Compose system prompt: skill context + global context + role
+    skill_context =
+      AgentWorkshop.Skills.context_for(workshop_tools: workshop_tools, skill: skill)
+
+    system_prompt = compose_system_prompt(skill_context, global.context, role)
 
     # Merge global query opts with agent-specific opts (agent wins)
     agent_query_opts = split_opts(opts)
@@ -462,7 +466,15 @@ defmodule AgentWorkshop.Workshop do
     end
 
     global = get_global_state()
-    system_prompt = compose_system_prompt(global.context, entry.role)
+
+    # Reconstruct skill context for reset
+    workshop_tools = Keyword.get(entry.agent_opts, :workshop_tools, false)
+    skill = Keyword.get(entry.agent_opts, :skill)
+
+    skill_context =
+      AgentWorkshop.Skills.context_for(workshop_tools: workshop_tools, skill: skill)
+
+    system_prompt = compose_system_prompt(skill_context, global.context, entry.role)
 
     agent_query_opts = split_opts(entry.agent_opts)
     query_opts = Keyword.merge(global.query_opts, agent_query_opts)
@@ -1735,8 +1747,8 @@ defmodule AgentWorkshop.Workshop do
     end
   end
 
-  defp compose_system_prompt(context, role) do
-    [context, role]
+  defp compose_system_prompt(skill_context, user_context, role) do
+    [skill_context, user_context, role]
     |> Enum.reject(fn s -> is_nil(s) or String.trim(s) == "" end)
     |> case do
       [] -> nil
