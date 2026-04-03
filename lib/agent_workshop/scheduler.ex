@@ -40,11 +40,17 @@ defmodule AgentWorkshop.Scheduler do
   @doc false
   def stop(agent) do
     case Registry.lookup(@registry, agent) do
-      [{pid, _}] -> GenServer.stop(pid, :normal)
-      [] -> :ok
+      [{pid, _}] ->
+        try do
+          GenServer.stop(pid, :normal, 3_000)
+        catch
+          :exit, _ ->
+            if Process.alive?(pid), do: Process.exit(pid, :kill)
+        end
+
+      [] ->
+        :ok
     end
-  catch
-    :exit, _ -> :ok
   end
 
   @doc false
@@ -91,6 +97,16 @@ defmodule AgentWorkshop.Scheduler do
   end
 
   @impl true
+  # Task result messages from cast — ignore
+  def handle_info({ref, _result}, state) when is_reference(ref) do
+    Process.demonitor(ref, [:flush])
+    {:noreply, state}
+  end
+
+  def handle_info({:DOWN, _ref, :process, _pid, _reason}, state) do
+    {:noreply, state}
+  end
+
   def handle_info(:tick, state) do
     # Skip if agent is busy (don't pile up)
     try do

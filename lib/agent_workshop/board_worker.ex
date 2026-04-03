@@ -48,11 +48,17 @@ defmodule AgentWorkshop.BoardWorker do
   @doc false
   def stop(agent_name) do
     case Registry.lookup(@registry, agent_name) do
-      [{pid, _}] -> GenServer.stop(pid, :normal)
-      [] -> :ok
+      [{pid, _}] ->
+        try do
+          GenServer.stop(pid, :normal, 3_000)
+        catch
+          :exit, _ ->
+            if Process.alive?(pid), do: Process.exit(pid, :kill)
+        end
+
+      [] ->
+        :ok
     end
-  catch
-    :exit, _ -> :ok
   end
 
   @doc false
