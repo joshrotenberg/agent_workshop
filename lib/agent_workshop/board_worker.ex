@@ -204,9 +204,14 @@ defmodule AgentWorkshop.BoardWorker do
     # Use cast so we don't block the poll loop
     Workshop.cast(state.agent_name, prompt)
 
-    # Spawn a watcher that waits for the agent to finish and marks the item
+    # Start a supervised watcher that polls the agent until it finishes,
+    # then marks the work item complete or failed.
     worker_pid = self()
-    spawn(fn -> watch_completion(state.agent_name, item.id, worker_pid) end)
+    tasks_sup = AgentWorkshop.Workshop.TasksSupervisor
+
+    Task.Supervisor.start_child(tasks_sup, fn ->
+      watch_completion(state.agent_name, item.id, worker_pid)
+    end)
 
     %{state | current_item: item.id}
   end
