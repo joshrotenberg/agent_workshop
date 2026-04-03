@@ -207,6 +207,8 @@ defmodule AgentWorkshop.BoardWorker do
         Work.complete(item_id, result_text)
         Telemetry.event(:board_worker_completed, %{}, %{agent: agent_name, item: item_id})
         PubSub.broadcast({:board_worker, :completed, agent_name, item_id})
+        # Reset agent session so it starts fresh for the next work item
+        Workshop.reset(agent_name)
         send(worker_pid, {:work_done, item_id})
 
       %{status: :working} ->
