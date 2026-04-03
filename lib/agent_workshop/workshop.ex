@@ -632,27 +632,81 @@ defmodule AgentWorkshop.Workshop do
   defdelegate put(key, value), to: Store
 
   @doc """
-  Get a value from the shared store. Returns `nil` if not found.
+  Get a value from the shared store.
+
+  Returns `nil` if the key does not exist. See `get/2` to supply a default.
+
+  ## Examples
+
+      iex> put(:spec, "LRU cache with TTL")
+      iex> get(:spec)
+      "LRU cache with TTL"
+
+      iex> get(:nonexistent)
+      nil
   """
   defdelegate get(key), to: Store
 
   @doc """
-  Get a value with a default.
+  Get a value from the shared store, returning `default` if the key is missing.
+
+  ## Examples
+
+      iex> get(:missing, "fallback")
+      "fallback"
+
+      iex> put(:count, 5)
+      iex> get(:count, 0)
+      5
   """
   defdelegate get(key, default), to: Store
 
   @doc """
-  List all keys in the shared store.
+  List all keys currently in the shared store.
+
+  Returns an empty list when the store has no entries.
+
+  ## Examples
+
+      iex> put(:spec, "cache design")
+      iex> put(:notes, "use GenServer")
+      iex> store_keys()
+      [:notes, :spec]
+
+      iex> store_keys()
+      []
   """
   def store_keys, do: Store.keys()
 
   @doc """
   Delete a key from the shared store.
+
+  No-op if the key does not exist.
+
+  ## Examples
+
+      iex> put(:scratch, "temp value")
+      iex> store_delete(:scratch)
+      :ok
+      iex> get(:scratch)
+      nil
   """
   defdelegate store_delete(key), to: Store, as: :delete
 
   @doc """
-  Show all entries in the shared store.
+  Print all entries in the shared store to the console.
+
+  Each entry is displayed as `key: value`. Prints "Store is empty." when
+  the store has no entries.
+
+  ## Example
+
+      iex> put(:spec, "LRU cache")
+      iex> put(:status, :draft)
+      iex> store()
+        :spec: "LRU cache"
+        :status: :draft
+      :ok
   """
   def store do
     ensure_started()
@@ -732,7 +786,14 @@ defmodule AgentWorkshop.Workshop do
   end
 
   @doc """
-  Clear event history.
+  Clear all recorded events from the event log.
+
+  After calling this, `events/0` will show no entries until new events occur.
+
+  ## Example
+
+      iex> clear_events()
+      :ok
   """
   @spec clear_events() :: :ok
   def clear_events do
@@ -790,7 +851,17 @@ defmodule AgentWorkshop.Workshop do
   end
 
   @doc """
-  Cancel a scheduled task.
+  Cancel a recurring schedule for an agent.
+
+  Stops the agent from executing its scheduled prompt. The agent itself
+  remains available for manual interaction. No-op if the agent has no
+  active schedule.
+
+  ## Example
+
+      iex> every(:monitor, "Check CI status", interval: :timer.minutes(5))
+      iex> cancel(:monitor)
+      :ok
   """
   @spec cancel(atom()) :: :ok
   def cancel(name) do
@@ -849,7 +920,17 @@ defmodule AgentWorkshop.Workshop do
   end
 
   @doc """
-  Reset budget tracking. Clears all budget limits.
+  Reset all budget tracking.
+
+  Clears both global and per-agent budget limits and spent totals.
+  After calling this, agents can spend without budget restrictions
+  until new limits are set via `configure(max_cost_usd: ...)` or
+  per-agent `agent(:name, "role", max_cost_usd: ...)`.
+
+  ## Example
+
+      iex> reset_budget()
+      :ok
   """
   @spec reset_budget() :: :ok
   def reset_budget do
@@ -997,6 +1078,16 @@ defmodule AgentWorkshop.Workshop do
 
   @doc """
   Mark a work item as in progress.
+
+  Transitions a work item from `:ready` (or `:claimed`) to `:in_progress`.
+  Typically called after an agent has claimed the item with `claim_work/2`.
+
+  ## Example
+
+      iex> work(:cache, "Implement LRU cache", type: :code)
+      iex> claim_work(:cache, :impl)
+      iex> start_work(:cache)
+      :ok
   """
   @spec start_work(atom()) :: :ok | {:error, term()}
   def start_work(id) do
@@ -1036,7 +1127,18 @@ defmodule AgentWorkshop.Workshop do
   end
 
   @doc """
-  Mark a work item as failed.
+  Mark a work item as failed with an optional error message.
+
+  Transitions the item to `:failed` status. Unlike `cancel_work/1`, this
+  indicates the work was attempted but did not succeed.
+
+  ## Examples
+
+      iex> fail_work(:cache, "Tests failed: 3 assertions")
+      :ok
+
+      iex> fail_work(:cache)
+      :ok
   """
   @spec fail_work(atom(), String.t() | nil) :: :ok | {:error, term()}
   def fail_work(id, error \\ nil) do
@@ -1054,7 +1156,17 @@ defmodule AgentWorkshop.Workshop do
   end
 
   @doc """
-  Cancel a work item.
+  Cancel a work item, removing it from active consideration.
+
+  Transitions the item to `:cancelled` status. Unlike `fail_work/2`, this
+  indicates the work was intentionally abandoned rather than attempted
+  and failed.
+
+  ## Example
+
+      iex> work(:cache, "Implement LRU cache", type: :code)
+      iex> cancel_work(:cache)
+      :ok
   """
   @spec cancel_work(atom()) :: :ok | {:error, term()}
   def cancel_work(id) do
@@ -1073,6 +1185,22 @@ defmodule AgentWorkshop.Workshop do
 
   @doc """
   Get details of a specific work item.
+
+  Returns the full work item struct including status, type, priority,
+  dependencies, claimed agent, and result. Returns `nil` if the item
+  does not exist.
+
+  ## Examples
+
+      iex> work(:cache, "Implement LRU cache", type: :code, priority: 1)
+      iex> item = work_item(:cache)
+      iex> item.title
+      "Implement LRU cache"
+      iex> item.status
+      :ready
+
+      iex> work_item(:nonexistent)
+      nil
   """
   @spec work_item(atom()) :: Work.t() | nil
   def work_item(id) do
@@ -1130,7 +1258,19 @@ defmodule AgentWorkshop.Workshop do
   end
 
   @doc """
-  List active board workers.
+  Print a summary of all active board workers.
+
+  Board workers are agents that automatically poll the work board for
+  items matching their work type, claim them, execute them, and mark
+  them complete. Shows each worker's type, completed count, and current
+  item (if any). Prints "No board workers." when none are running.
+
+  ## Example
+
+      iex> workers()
+        :coder_1: code, 3 completed
+        :reviewer_1: review, 1 completed (working on :cache_review)
+      :ok
   """
   @spec workers() :: :ok
   def workers do
