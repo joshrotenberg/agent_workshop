@@ -170,19 +170,26 @@ defmodule AgentWorkshop.Work do
 
   @doc """
   Claim a work item for an agent.
+
+  Uses atomic ETS take-and-reinsert to prevent race conditions
+  when multiple board workers poll simultaneously.
   """
   @spec claim(atom(), atom()) :: :ok | {:error, term()}
   def claim(id, agent_name) do
-    case get(id) do
-      nil ->
+    # Atomic: take removes the entry so no other process can claim it
+    case :ets.take(@table, id) do
+      [] ->
         {:error, :not_found}
 
-      %{status: :ready} = item ->
-        update(id, %{item | status: :claimed, claimed_by: agent_name})
+      [{^id, %{status: :ready} = item}] ->
+        claimed = %{item | status: :claimed, claimed_by: agent_name}
+        :ets.insert(@table, {id, claimed})
         PubSub.broadcast({:work, :claimed, id, agent_name})
         :ok
 
-      %{status: status} ->
+      [{^id, %{status: status} = item}] ->
+        # Not ready — put it back
+        :ets.insert(@table, {id, item})
         {:error, {:invalid_transition, status, :claimed}}
     end
   end
