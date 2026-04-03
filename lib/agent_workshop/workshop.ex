@@ -217,19 +217,13 @@ defmodule AgentWorkshop.Workshop do
     query_opts = opts
     validate_opts!(query_opts)
 
+    # Store config. Backend validation happens in agent/3, not here —
+    # configure() can be called incrementally (e.g., set context first, backend later).
     Agent.update(@state, fn state ->
-      new_backend = backend || state.backend
-      new_backend_config = backend_config || state.backend_config
-
-      if is_nil(new_backend) do
-        raise ArgumentError,
-              ":backend is required. Pass a module implementing AgentWorkshop.Backend."
-      end
-
       %{
         state
-        | backend: new_backend,
-          backend_config: new_backend_config,
+        | backend: backend || state.backend,
+          backend_config: backend_config || state.backend_config,
           query_opts: Keyword.merge(state.query_opts, query_opts),
           context: context || state.context
       }
