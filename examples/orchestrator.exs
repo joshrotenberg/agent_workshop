@@ -17,7 +17,8 @@ profile(:reviewer, "You review code. Do not modify files. Report findings as a p
   allowed_tools: ["Read", "Bash"]
 )
 
-agent(:orchestrator,
+agent(
+  :orchestrator,
   "You coordinate a team of agents. Use Workshop tools to delegate work.",
   workshop_tools: true,
   model: "sonnet",

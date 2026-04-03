@@ -11,7 +11,11 @@ configure(
 )
 
 profile(:coder, "You write clean, well-tested code.", max_turns: 15, timeout: :timer.minutes(5))
-profile(:reviewer, "Review only. Do not modify files.", model: "opus", allowed_tools: ["Read", "Bash"])
+
+profile(:reviewer, "Review only. Do not modify files.",
+  model: "opus",
+  allowed_tools: ["Read", "Bash"]
+)
 
 # Two parallel coders + one reviewer
 board_worker(:coder_1, :code, profile: :coder, interval: :timer.seconds(30), worktree: true)

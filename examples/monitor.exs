@@ -14,7 +14,8 @@ agent(:monitor, "You check project health and report issues concisely.",
 )
 
 every(:monitor, "Run mix test and report: pass/fail count, any failures.",
-  interval: :timer.minutes(10))
+  interval: :timer.minutes(10)
+)
 
 # Usage:
 #   schedules()     # see active schedules
