@@ -11,7 +11,9 @@ defmodule AgentWorkshop.Application do
   #                        BoardWorker (unique keys for named lookup).
   #   4. EventLog       -- subscribes to the PubSub registry on init, so the
   #                        registry must already be running.
-  #   5. DynamicSupervisor / TaskSupervisor -- started last because nothing
+  #   5. ProcessMonitor   -- monitors agent SessionServer pids; auto-cleans
+  #                        ETS entries when agents crash.
+  #   6. DynamicSupervisor / TaskSupervisor -- started last because nothing
   #                        depends on them at boot; agents are added later via
   #                        Workshop.agent/2.
 
@@ -28,6 +30,7 @@ defmodule AgentWorkshop.Application do
       {Registry, keys: :unique, name: AgentWorkshop.Scheduler.Registry},
       {Registry, keys: :unique, name: AgentWorkshop.BoardWorker.Registry},
       AgentWorkshop.EventLog,
+      AgentWorkshop.ProcessMonitor,
       {DynamicSupervisor,
        name: AgentWorkshop.Workshop.SessionsSupervisor, strategy: :one_for_one},
       {Task.Supervisor, name: AgentWorkshop.Workshop.TasksSupervisor}

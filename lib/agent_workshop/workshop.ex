@@ -360,6 +360,8 @@ defmodule AgentWorkshop.Workshop do
 
     :ets.insert(@table, {name, entry})
     if agent_max_cost, do: Budget.set_agent(name, agent_max_cost)
+    # Monitor the session process — auto-cleanup if it crashes
+    AgentWorkshop.ProcessMonitor.monitor(name, pid)
     global = get_global_state()
     Telemetry.event(:agent_created, %{}, %{agent: name, role: role, backend: global.backend})
     PubSub.broadcast({:agent, :created, name})
@@ -400,6 +402,7 @@ defmodule AgentWorkshop.Workshop do
         :ok
 
       entry ->
+        AgentWorkshop.ProcessMonitor.demonitor(name)
         force_stop_agent(entry)
         :ets.delete(@table, name)
         Telemetry.event(:agent_dismissed, %{}, %{agent: name})
