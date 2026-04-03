@@ -1,5 +1,9 @@
 # AgentWorkshop
 
+[![CI](https://github.com/joshrotenberg/agent_workshop/actions/workflows/ci.yml/badge.svg)](https://github.com/joshrotenberg/agent_workshop/actions/workflows/ci.yml)
+[![Hex.pm](https://img.shields.io/hexpm/v/agent_workshop.svg)](https://hex.pm/packages/agent_workshop)
+[![Docs](https://img.shields.io/badge/hex-docs-blue.svg)](https://hexdocs.pm/agent_workshop)
+
 Multi-agent orchestration for IEx. Backend-agnostic, MCP-enabled.
 
 Run multiple LLM agents side by side, coordinate them with simple
@@ -11,11 +15,11 @@ or any CLI-based LLM through a pluggable backend.
 ```elixir
 def deps do
   [
-    {:agent_workshop, "~> 0.1.0"},
+    {:agent_workshop, "~> 0.2"},
 
     # Pick your backend(s):
-    {:claude_wrapper, "~> 0.5"},   # for Claude Code CLI
-    {:codex_wrapper, "~> 0.1"},    # for OpenAI Codex CLI
+    {:claude_wrapper, "~> 0.4"},   # for Claude Code CLI
+    {:codex_wrapper, "~> 0.2"},    # for OpenAI Codex CLI
 
     # Optional, for MCP server:
     {:anubis_mcp, "~> 1.0"},
@@ -34,7 +38,6 @@ $ iex -S mix
 ```elixir
 import AgentWorkshop.Workshop
 
-# Configure with your backend
 configure(
   backend: AgentWorkshop.Backends.Claude,
   backend_config: ClaudeWrapper.Config.new(working_dir: "."),
@@ -43,18 +46,12 @@ configure(
   context: "Elixir project. Run mix test before committing."
 )
 
-# Create agents
 agent(:impl, "You write clean, well-tested code.", max_turns: 15)
 agent(:reviewer, "You review code. Do not modify files.",
   model: "opus", allowed_tools: ["Read", "Bash"])
 
-# Talk to them
 ask(:impl, "Implement caching for the user lookup")
 |> pipe(:reviewer, "Review for correctness")
-
-# Check on things
-status()
-total_cost()
 ```
 
 ## Setup files
@@ -69,59 +66,126 @@ configure(
   model: "sonnet",
   permission_mode: :bypass_permissions,
   context: "My project description.",
-  mcp: [port: 4222]  # auto-start MCP server
+  mcp: [port: 4222]
 )
 
-agent(:impl, "You write clean code.", max_turns: 15)
-agent(:reviewer, "Review only.", model: "opus", allowed_tools: ["Read", "Bash"])
+profile(:coder, "You write clean code.", max_turns: 15)
+profile(:reviewer, "Review only.", model: "opus", allowed_tools: ["Read", "Bash"])
+
+agent(:orchestrator, "You coordinate agents.",
+  workshop_tools: true, model: "sonnet", max_turns: 30)
 ```
 
-## Sync vs async
+## Three orchestration patterns
+
+### 1. Direct (ask/cast/pipe)
 
 ```elixir
-# Synchronous -- blocks until done
 ask(:impl, "Implement the retry logic")
-
-# Asynchronous -- returns immediately
 cast(:impl, "Implement the caching layer")
-cast(:tests, "Write tests for lib/encoder.ex")
+status()
+await(:impl)
 
-status()        # see who's done
-await(:impl)    # wait for one
-await_all()     # wait for everyone
-```
-
-## Coordination
-
-```elixir
-# Pipe: chain agents together
 ask(:impl, "Implement caching")
 |> pipe(:reviewer, "Review for edge cases")
 |> pipe(:tests, "Write tests for this")
-
-# Fan: same question to multiple agents
-fan("What issues do you see in lib/retry.ex?", [:impl, :reviewer])
-await_all()
-result(:impl)       # impl's take
-result(:reviewer)   # reviewer's take
 ```
 
-## Mixed backends
+### 2. Orchestrator (workshop_tools + profiles)
 
-Different LLMs for different roles:
+An agent with `workshop_tools: true` can create and manage other agents:
 
 ```elixir
-configure(
-  backend: AgentWorkshop.Backends.Claude,
-  backend_config: ClaudeWrapper.Config.new(working_dir: ".")
-)
+profile(:coder, "You write clean code.", max_turns: 15)
+profile(:reviewer, "Review only.", model: "opus")
 
-agent(:impl, "You write code.", model: "sonnet")
-agent(:reviewer, "You review code.",
-  backend: AgentWorkshop.Backends.Codex,
-  backend_config: CodexWrapper.Config.new(working_dir: "."),
-  model: "o3"
-)
+agent(:orchestrator, "You coordinate agents.",
+  workshop_tools: true, model: "sonnet", max_turns: 30)
+
+cast(:orchestrator, "Build the auth module, have it reviewed and tested")
+# Orchestrator creates coders from profiles, delegates, reviews, cleans up
+```
+
+### 3. Board workers (post work, agents self-organize)
+
+```elixir
+profile(:coder, "You write clean code.", max_turns: 15)
+profile(:reviewer, "Review only.", model: "opus")
+
+board_worker(:coder_1, :code, profile: :coder, interval: :timer.seconds(30))
+board_worker(:coder_2, :code, profile: :coder, interval: :timer.seconds(30))
+board_worker(:reviewer_1, :review, profile: :reviewer, interval: :timer.seconds(30))
+
+# Post work -- workers pick it up automatically
+work(:feature, "Implement checkout command", type: :code, priority: 1,
+  spec: "Follow existing patterns. Write tests.")
+work(:feature_review, "Review checkout", type: :review, depends_on: [:feature])
+# coder claims feature, implements it, marks done
+# feature_review auto-unblocks, reviewer claims it
+```
+
+## Work board
+
+Structured task tracker with lifecycle and dependencies:
+
+```elixir
+work(:cache, "Implement LRU cache", type: :code, priority: 1,
+  spec: "LRU with 1000 entries and TTL per entry")
+work(:cache_review, "Review cache", type: :review, depends_on: [:cache])
+
+board()                    # show all items
+board(status: :ready)      # filter by status
+claim_work(:cache, :impl)  # manually claim
+complete_work(:cache)      # mark done, unblocks dependents
+```
+
+Lifecycle: `new -> ready -> claimed -> in_progress -> done / failed / blocked / cancelled`
+
+## Shared state
+
+Key-value scratchpad for agent coordination:
+
+```elixir
+put(:spec, "LRU cache with TTL support")
+get(:spec)
+store()          # show all entries
+store_keys()     # list keys
+```
+
+## Event log
+
+See what's happening in real time:
+
+```elixir
+watch()              # print events live
+events()             # show last 20 events
+events(last: 50)     # more
+```
+
+## Scheduling
+
+Run prompts on a recurring interval:
+
+```elixir
+every(:monitor, "Check CI status", interval: :timer.minutes(5))
+schedules()
+cancel(:monitor)
+```
+
+## Cost budgets
+
+```elixir
+configure(max_cost_usd: 10.00)
+agent(:impl, "Coder", max_cost_usd: 2.00)
+budget()          # global remaining
+budget(:impl)     # per-agent
+```
+
+## Agent timeouts
+
+```elixir
+agent(:impl, "Coder", timeout: :timer.minutes(5))
+# Returns {:error, :timeout} if CLI doesn't respond in time
 ```
 
 ## MCP server
@@ -129,7 +193,6 @@ agent(:reviewer, "You review code.",
 Expose Workshop as MCP tools so Claude Code can orchestrate agents:
 
 ```elixir
-# Start MCP server (or use mcp: [port: 4222] in configure)
 mcp_server(port: 4222)
 ```
 
@@ -146,30 +209,32 @@ Then in `.mcp.json`:
 }
 ```
 
-15 tools available: `configure`, `create_agent`, `ask`, `cast`, `await`,
-`await_all`, `status`, `result`, `pipe`, `fan`, `info`, `agents`,
-`reset`, `dismiss`, `cost`.
+21 tools available including agent management, work board, and coordination.
+
+## Skills
+
+Skills follow the [agentskills.io](https://agentskills.io) open standard.
+Agents with `workshop_tools: true` auto-receive AGENTS.md guidance.
+
+```elixir
+agent(:impl, "Coder", skill: :pair)
+agent(:orchestrator, "Coordinator", workshop_tools: true)  # gets AGENTS.md
+```
 
 ## Observability
 
 ```elixir
 status()                       # dashboard table
-info(:impl)                    # detailed map (model, cost, turns, ...)
+info(:impl)                    # detailed map
 result(:impl)                  # last response text
 result(:impl, :full)           # full result map
-history(:impl)                 # print conversation
-history(:impl, last: 3)        # last 3 turns
+history(:impl)                 # conversation
 cost()                         # itemized by agent
-total_cost()                   # one number
-```
-
-## Lifecycle
-
-```elixir
-reset(:impl)     # clear conversation, keep config
-dismiss(:impl)   # remove agent entirely
-reset_all()      # stop everything
-load("other.exs") # load a different setup
+total_cost()                   # sum
+watch()                        # live event stream
+events()                       # event history
+workers()                      # board worker status
+board()                        # work board
 ```
 
 ## Backends
@@ -179,17 +244,12 @@ load("other.exs") # load a different setup
 | `AgentWorkshop.Backends.Claude` | `claude_wrapper` | Claude Code |
 | `AgentWorkshop.Backends.Codex` | `codex_wrapper` | OpenAI Codex |
 
-Implement `AgentWorkshop.Backend` to add your own. See the behaviour
-module for the 8 required callbacks.
+Implement `AgentWorkshop.Backend` to add your own.
 
 ## Examples
 
-See `examples/` for ready-to-use `.workshop.exs` configs:
-
-- `solo.exs` -- single agent
-- `pair.exs` -- implement + review
-- `team.exs` -- impl, reviewer, tests, docs
-- `mixed.exs` -- Claude + Codex agents together
+See `examples/` for ready-to-use `.workshop.exs` configs and
+`skills/` for agentskills.io-format pattern guides.
 
 ## License
 
