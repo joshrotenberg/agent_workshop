@@ -104,8 +104,15 @@ defmodule AgentWorkshop.WorkshopTest do
   end
 
   describe "configure/1" do
-    test "requires backend on first call" do
-      assert catch_exit(Workshop.configure(model: "sonnet"))
+    test "requires backend to create agents" do
+      # configure without backend succeeds (just sets query_opts)
+      # but agent creation fails because no backend is set
+      Workshop.stop()
+      Workshop.configure(model: "sonnet")
+
+      assert_raise ArgumentError, ~r/no backend configured/, fn ->
+        Workshop.agent(:impl)
+      end
     end
 
     test "accepts backend and backend_config" do
@@ -504,7 +511,13 @@ defmodule AgentWorkshop.WorkshopTest do
       setup_mock()
       Workshop.agent(:monitor, "Monitor")
       Workshop.every(:monitor, "check", interval: 100)
+
+      # Get the pid before stopping so we can wait for cleanup
+      [{pid, _}] = Registry.lookup(AgentWorkshop.Scheduler.Registry, :monitor)
+      ref = Process.monitor(pid)
       Workshop.cancel(:monitor)
+      assert_receive {:DOWN, ^ref, :process, ^pid, _}, 1000
+
       refute :monitor in AgentWorkshop.Scheduler.list_all()
     end
 

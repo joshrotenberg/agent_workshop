@@ -68,12 +68,21 @@ defmodule AgentWorkshop.Workshop do
 
   ## Architecture
 
-      Workshop (IEx helpers, global state in named Agent)
-        |-- DynamicSupervisor
-        |     |-- Backend session (:impl)
-        |     |-- Backend session (:reviewer)
-        |     `-- Backend session (:tests)
-        `-- Task.Supervisor (async tasks for cast/2)
+  The OTP Application (`AgentWorkshop.Application`) owns the full lifecycle:
+  ETS tables, registries, supervisors, and the EventLog. Workshop is the
+  public IEx facade -- it reads and writes shared state but does not start
+  or supervise any infrastructure. Call `configure/1` to set your backend;
+  everything else is already running.
+
+      Application supervisor (started automatically)
+        |-- TableManager (owns ETS tables)
+        |-- Agent (:agent_workshop_state -- global config)
+        |-- Registry (PubSub, Scheduler, BoardWorker)
+        |-- EventLog
+        |-- DynamicSupervisor (agent sessions)
+        `-- Task.Supervisor (async cast tasks)
+
+      Workshop (this module -- IEx helpers, no supervision duties)
   """
 
   alias AgentWorkshop.{Budget, Profiles, PubSub, Scheduler, Store, Telemetry, Work}
@@ -82,7 +91,6 @@ defmodule AgentWorkshop.Workshop do
   @state :agent_workshop_state
   @sessions_sup AgentWorkshop.Workshop.SessionsSupervisor
   @tasks_sup AgentWorkshop.Workshop.TasksSupervisor
-  @supervisor AgentWorkshop.Workshop.Supervisor
 
   @special_keys [
     :backend,
@@ -96,95 +104,59 @@ defmodule AgentWorkshop.Workshop do
   @max_queue_size 5
   @valid_permission_modes [:default, :accept_edits, :bypass_permissions, :dont_ask, :plan, :auto]
 
-  # ── Boot ──────────────────────────────────────────────────────
-
-  defp ensure_started do
-    if Process.whereis(@supervisor) && :ets.info(@table) != :undefined do
-      :ok
-    else
-      do_start()
-    end
-  end
-
-  defp do_start do
-    # Stop stale supervisor if ETS table was lost (e.g., owning process died)
-    case Process.whereis(@supervisor) do
-      nil ->
-        :ok
-
-      pid ->
-        try do
-          Supervisor.stop(pid, :normal)
-        catch
-          :exit, _ -> :ok
-        end
-
-        # Wait for name to be unregistered
-        Process.sleep(10)
-    end
-
-    # Start registries (before supervisor, so they're available immediately)
-    AgentWorkshop.PubSub.start_registry()
-    AgentWorkshop.Scheduler.start_registry()
-    AgentWorkshop.BoardWorker.start_registry()
-
-    # Agent init creates ETS tables so they're owned by a supervised process
-    agent_init = fn ->
-      if :ets.info(@table) == :undefined do
-        :ets.new(@table, [:named_table, :public, :set])
-      end
-
-      AgentWorkshop.Store.create_table()
-      AgentWorkshop.Budget.create_table()
-      AgentWorkshop.Work.create_table()
-      AgentWorkshop.Profiles.create_table()
-      default_state()
-    end
-
-    children = [
-      %{id: @state, start: {Agent, :start_link, [agent_init, [name: @state]]}},
-      {DynamicSupervisor, name: @sessions_sup, strategy: :one_for_one},
-      {Task.Supervisor, name: @tasks_sup},
-      AgentWorkshop.EventLog
-    ]
-
-    case Supervisor.start_link(children, strategy: :one_for_one, name: @supervisor) do
-      {:ok, _pid} -> :ok
-      {:error, {:already_started, _pid}} -> :ok
-      error -> error
-    end
-  end
-
   @doc """
-  Stop the entire Workshop supervision tree. Used for clean teardown in tests.
+  Stop the Workshop and clean up all state. Used for teardown in tests.
+
+  Dismisses all agents, clears all ETS tables. The Application supervisor
+  remains running — call `configure/1` to set up again.
   """
   @spec stop() :: :ok
   def stop do
-    case Process.whereis(@supervisor) do
-      nil ->
-        :ok
-
-      pid ->
-        try do
-          Supervisor.stop(pid, :normal)
-        catch
-          :exit, _ -> :ok
-        end
-    end
-
-    if :ets.info(@table) != :undefined do
-      :ets.delete(@table)
-    end
-
-    AgentWorkshop.Store.delete_table()
-    AgentWorkshop.Budget.delete_table()
-    AgentWorkshop.Work.delete_table()
-    AgentWorkshop.Profiles.delete_table()
-
+    # Soft reset: dismiss agents and clear data, but leave the supervision
+    # tree running. The Application supervisor, TableManager, registries,
+    # and EventLog all survive -- only user-created state is removed.
+    stop_all_processes()
+    clear_all_tables()
+    reset_global_state()
     :ok
   end
 
-  defp default_state do
+  defp stop_all_processes do
+    safe_stop_each(agents(), &dismiss/1)
+    safe_stop_each(Scheduler.list_all(), &Scheduler.stop/1)
+    safe_stop_each(AgentWorkshop.BoardWorker.list_all(), &AgentWorkshop.BoardWorker.stop/1)
+  end
+
+  defp safe_stop_each(names, stop_fn) do
+    for name <- names do
+      try do
+        stop_fn.(name)
+      catch
+        _, _ -> :ok
+      end
+    end
+  end
+
+  defp clear_all_tables do
+    for table <- [
+          @table,
+          AgentWorkshop.Store.table_name(),
+          AgentWorkshop.Work.table_name(),
+          AgentWorkshop.Budget.table_name(),
+          AgentWorkshop.Profiles.table_name()
+        ] do
+      if :ets.info(table) != :undefined, do: :ets.delete_all_objects(table)
+    end
+  end
+
+  defp reset_global_state do
+    if Process.whereis(@state) do
+      Agent.update(@state, fn _ -> default_state() end)
+    end
+  end
+
+  @doc false
+  def default_state do
     %{backend: nil, backend_config: nil, query_opts: [permission_mode: :auto], context: nil}
   end
 
@@ -237,8 +209,6 @@ defmodule AgentWorkshop.Workshop do
   """
   @spec configure(keyword()) :: :ok
   def configure(opts \\ []) do
-    ensure_started()
-
     {context, opts} = Keyword.pop(opts, :context)
     {backend, opts} = Keyword.pop(opts, :backend)
     {backend_config, opts} = Keyword.pop(opts, :backend_config)
@@ -247,19 +217,13 @@ defmodule AgentWorkshop.Workshop do
     query_opts = opts
     validate_opts!(query_opts)
 
+    # Store config. Backend validation happens in agent/3, not here —
+    # configure() can be called incrementally (e.g., set context first, backend later).
     Agent.update(@state, fn state ->
-      new_backend = backend || state.backend
-      new_backend_config = backend_config || state.backend_config
-
-      if is_nil(new_backend) do
-        raise ArgumentError,
-              ":backend is required. Pass a module implementing AgentWorkshop.Backend."
-      end
-
       %{
         state
-        | backend: new_backend,
-          backend_config: new_backend_config,
+        | backend: backend || state.backend,
+          backend_config: backend_config || state.backend_config,
           query_opts: Keyword.merge(state.query_opts, query_opts),
           context: context || state.context
       }
@@ -321,8 +285,6 @@ defmodule AgentWorkshop.Workshop do
   def agent(name, role_or_opts \\ nil, opts \\ [])
 
   def agent(name, role, opts) when is_atom(name) and (is_binary(role) or is_nil(role)) do
-    ensure_started()
-
     # Dismiss existing agent with same name
     if get_agent(name), do: dismiss(name)
 
@@ -422,7 +384,6 @@ defmodule AgentWorkshop.Workshop do
   """
   @spec agents() :: [atom()]
   def agents do
-    ensure_started()
     :ets.tab2list(@table) |> Enum.map(&elem(&1, 0)) |> Enum.sort()
   end
 
@@ -434,8 +395,6 @@ defmodule AgentWorkshop.Workshop do
   """
   @spec dismiss(atom()) :: :ok
   def dismiss(name) do
-    ensure_started()
-
     case get_agent(name) do
       nil ->
         :ok
@@ -464,7 +423,6 @@ defmodule AgentWorkshop.Workshop do
   """
   @spec reset(atom()) :: :ok
   def reset(name) do
-    ensure_started()
     entry = get_agent!(name)
 
     force_stop_agent(entry)
@@ -525,7 +483,6 @@ defmodule AgentWorkshop.Workshop do
   """
   @spec reset_all() :: :ok
   def reset_all do
-    ensure_started()
     agents() |> Enum.each(&dismiss/1)
     Agent.update(@state, fn _ -> default_state() end)
     :ok
@@ -709,8 +666,6 @@ defmodule AgentWorkshop.Workshop do
       :ok
   """
   def store do
-    ensure_started()
-
     case Store.entries() do
       [] ->
         print_info("Store is empty.")
@@ -771,7 +726,6 @@ defmodule AgentWorkshop.Workshop do
   """
   @spec events(keyword()) :: :ok
   def events(opts \\ []) do
-    ensure_started()
     entries = AgentWorkshop.EventLog.recent(opts)
 
     if entries == [] do
@@ -813,12 +767,12 @@ defmodule AgentWorkshop.Workshop do
   """
   @spec every(atom(), String.t(), keyword()) :: :ok
   def every(name, prompt, opts) do
-    ensure_started()
     get_agent!(name)
     interval = Keyword.fetch!(opts, :interval)
 
-    # Stop existing schedule for this agent
+    # Stop existing schedule for this agent (wait for Registry cleanup)
     Scheduler.stop(name)
+    Process.sleep(10)
 
     {:ok, _pid} =
       DynamicSupervisor.start_child(@sessions_sup, {
@@ -835,7 +789,6 @@ defmodule AgentWorkshop.Workshop do
   """
   @spec schedules() :: :ok
   def schedules do
-    ensure_started()
     agents = Scheduler.list_all()
 
     if agents == [] do
@@ -883,7 +836,6 @@ defmodule AgentWorkshop.Workshop do
   def budget(target \\ :global)
 
   def budget(:global) do
-    ensure_started()
     info = Budget.info(:global)
 
     if info.limit do
@@ -899,7 +851,6 @@ defmodule AgentWorkshop.Workshop do
   end
 
   def budget(name) when is_atom(name) do
-    ensure_started()
     entry = get_agent!(name)
     agent_info = Budget.info(name)
 
@@ -951,7 +902,6 @@ defmodule AgentWorkshop.Workshop do
   """
   @spec profile(atom(), String.t() | nil, keyword()) :: :ok
   def profile(name, role \\ nil, opts \\ []) do
-    ensure_started()
     Profiles.define(name, role, opts)
   end
 
@@ -966,8 +916,6 @@ defmodule AgentWorkshop.Workshop do
   """
   @spec from_profile(atom(), atom(), keyword()) :: :ok
   def from_profile(profile_name, agent_name, overrides \\ []) do
-    ensure_started()
-
     case Profiles.get(profile_name) do
       nil ->
         raise ArgumentError,
@@ -984,7 +932,6 @@ defmodule AgentWorkshop.Workshop do
   """
   @spec profiles() :: :ok
   def profiles do
-    ensure_started()
     names = Profiles.list()
 
     if names == [] do
@@ -1022,7 +969,6 @@ defmodule AgentWorkshop.Workshop do
   """
   @spec work(atom(), String.t(), keyword()) :: :ok
   def work(id, title, opts \\ []) do
-    ensure_started()
     Work.add(id, title, opts)
   end
 
@@ -1037,7 +983,6 @@ defmodule AgentWorkshop.Workshop do
   """
   @spec board(keyword()) :: :ok
   def board(filters \\ []) do
-    ensure_started()
     items = Work.list(filters)
 
     if items == [] do
@@ -1062,7 +1007,6 @@ defmodule AgentWorkshop.Workshop do
   """
   @spec claim_work(atom(), atom()) :: :ok | {:error, term()}
   def claim_work(id, agent_name) do
-    ensure_started()
     get_agent!(agent_name)
 
     case Work.claim(id, agent_name) do
@@ -1091,8 +1035,6 @@ defmodule AgentWorkshop.Workshop do
   """
   @spec start_work(atom()) :: :ok | {:error, term()}
   def start_work(id) do
-    ensure_started()
-
     case Work.start_work(id) do
       :ok ->
         :ok
@@ -1113,8 +1055,6 @@ defmodule AgentWorkshop.Workshop do
   """
   @spec complete_work(atom(), String.t() | nil) :: :ok | {:error, term()}
   def complete_work(id, result \\ nil) do
-    ensure_started()
-
     case Work.complete(id, result) do
       :ok ->
         print_info("#{inspect(id)} done.")
@@ -1142,8 +1082,6 @@ defmodule AgentWorkshop.Workshop do
   """
   @spec fail_work(atom(), String.t() | nil) :: :ok | {:error, term()}
   def fail_work(id, error \\ nil) do
-    ensure_started()
-
     case Work.fail(id, error) do
       :ok ->
         print_error("#{inspect(id)} failed: #{error || "no reason"}")
@@ -1170,8 +1108,6 @@ defmodule AgentWorkshop.Workshop do
   """
   @spec cancel_work(atom()) :: :ok | {:error, term()}
   def cancel_work(id) do
-    ensure_started()
-
     case Work.cancel(id) do
       :ok ->
         print_info("#{inspect(id)} cancelled.")
@@ -1204,7 +1140,6 @@ defmodule AgentWorkshop.Workshop do
   """
   @spec work_item(atom()) :: Work.t() | nil
   def work_item(id) do
-    ensure_started()
     Work.get(id)
   end
 
@@ -1234,8 +1169,6 @@ defmodule AgentWorkshop.Workshop do
   """
   @spec board_worker(atom(), atom(), keyword()) :: :ok
   def board_worker(name, work_type, opts \\ []) do
-    ensure_started()
-
     profile_name = Keyword.fetch!(opts, :profile)
     interval = Keyword.get(opts, :interval, 60_000)
     worktree = Keyword.get(opts, :worktree, false)
@@ -1274,7 +1207,6 @@ defmodule AgentWorkshop.Workshop do
   """
   @spec workers() :: :ok
   def workers do
-    ensure_started()
     names = AgentWorkshop.BoardWorker.list_all()
 
     if names == [] do
@@ -1312,7 +1244,6 @@ defmodule AgentWorkshop.Workshop do
   """
   @spec ask(atom(), String.t()) :: atom() | {:error, term()}
   def ask(name, prompt) do
-    ensure_started()
     consume_pending_task(name)
     do_send_sync(name, prompt)
   end
@@ -1342,7 +1273,6 @@ defmodule AgentWorkshop.Workshop do
   """
   @spec cast(atom(), String.t()) :: :ok | {:error, :queue_full}
   def cast(name, prompt) do
-    ensure_started()
     entry = get_agent!(name)
 
     if entry.status == :working do
@@ -1381,7 +1311,6 @@ defmodule AgentWorkshop.Workshop do
   """
   @spec await(atom(), timeout()) :: :ok | {:error, term()}
   def await(name, timeout \\ :infinity) do
-    ensure_started()
     entry = get_agent!(name)
 
     case entry.task do
@@ -1408,8 +1337,6 @@ defmodule AgentWorkshop.Workshop do
   """
   @spec await_all(timeout()) :: :ok
   def await_all(timeout \\ :infinity) do
-    ensure_started()
-
     busy =
       :ets.tab2list(@table)
       |> Enum.filter(fn {_name, entry} -> entry.task != nil end)
@@ -1439,7 +1366,6 @@ defmodule AgentWorkshop.Workshop do
   """
   @spec status() :: :ok
   def status do
-    ensure_started()
     entries = :ets.tab2list(@table) |> Enum.sort_by(&elem(&1, 0))
 
     if entries == [] do
@@ -1479,13 +1405,10 @@ defmodule AgentWorkshop.Workshop do
   def result(name, mode \\ :text)
 
   def result(name, :full) do
-    ensure_started()
     get_agent!(name).last_result
   end
 
   def result(name, :text) do
-    ensure_started()
-
     case get_agent!(name).last_result do
       nil -> nil
       r -> r.result
@@ -1505,7 +1428,6 @@ defmodule AgentWorkshop.Workshop do
   """
   @spec history(atom(), keyword()) :: :ok
   def history(name, opts \\ []) do
-    ensure_started()
     entry = get_agent!(name)
     turns = entry.backend.history(entry.pid)
 
@@ -1532,7 +1454,6 @@ defmodule AgentWorkshop.Workshop do
   """
   @spec cost(atom()) :: float()
   def cost(name) when is_atom(name) do
-    ensure_started()
     entry = get_agent!(name)
 
     print_info(
@@ -1554,8 +1475,6 @@ defmodule AgentWorkshop.Workshop do
   """
   @spec cost() :: float()
   def cost do
-    ensure_started()
-
     :ets.tab2list(@table)
     |> Enum.sort_by(&elem(&1, 0))
     |> Enum.each(fn {name, e} ->
@@ -1572,8 +1491,6 @@ defmodule AgentWorkshop.Workshop do
   """
   @spec total_cost() :: float()
   def total_cost do
-    ensure_started()
-
     total =
       :ets.tab2list(@table)
       |> Enum.map(fn {_name, e} -> e.cumulative_cost end)
@@ -1596,7 +1513,6 @@ defmodule AgentWorkshop.Workshop do
   """
   @spec info(atom()) :: map()
   def info(name) do
-    ensure_started()
     entry = get_agent!(name)
 
     # Pull session_id from last result if available.

@@ -48,6 +48,21 @@ defmodule AgentWorkshop.Work do
   alias AgentWorkshop.{PubSub, Telemetry}
 
   @table :agent_workshop_work
+
+  # Lifecycle states:
+  #   :new         -- just added; has unmet dependencies, waiting for them
+  #   :ready       -- all dependencies satisfied (or none); available for claim
+  #   :claimed     -- an agent has claimed this item but hasn't started yet
+  #   :in_progress -- actively being worked on
+  #   :done        -- completed successfully; unblocks downstream dependents
+  #   :failed      -- execution failed; blocks downstream dependents
+  #   :blocked     -- a dependency failed or was cancelled
+  #   :cancelled   -- manually cancelled; blocks downstream dependents
+  #
+  # Dependency resolution: when an item completes (:done), all items that
+  # depend on it are re-evaluated. If all their dependencies are now :done,
+  # they transition from :new/:blocked to :ready. When an item fails or is
+  # cancelled, its dependents move to :blocked.
   @valid_statuses [:new, :ready, :claimed, :in_progress, :done, :failed, :blocked, :cancelled]
   @valid_types [:code, :review, :test, :docs, :deploy, :triage, :custom]
 
@@ -82,6 +97,9 @@ defmodule AgentWorkshop.Work do
         }
 
   # ── Table management ────────────────────────────────────────
+
+  @doc false
+  def table_name, do: @table
 
   @doc false
   def create_table do
