@@ -149,6 +149,19 @@ defmodule AgentWorkshop.BoardWorker do
   end
 
   # ── Internal ────────────────────────────────────────────────
+  #
+  # Poll/claim/execute/complete cycle:
+  #
+  #   1. POLL  -- on each :poll timer tick, check the work board for :ready
+  #              items matching this worker's work_type.
+  #   2. CLAIM -- atomically claim the highest-priority item so no other
+  #              worker picks it up (Work.claim/2 fails if already claimed).
+  #   3. EXECUTE -- mark the item :in_progress and send its title+spec as a
+  #              prompt via Workshop.cast/2 (non-blocking).
+  #   4. COMPLETE -- a spawned watcher polls the agent's status; when the
+  #              agent becomes :idle, it reads the result and calls
+  #              Work.complete/2 or Work.fail/2. The agent is then reset
+  #              so it starts fresh for the next item.
 
   defp try_claim_and_execute(state) do
     # Check if agent is busy

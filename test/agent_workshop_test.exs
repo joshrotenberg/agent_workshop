@@ -504,7 +504,13 @@ defmodule AgentWorkshop.WorkshopTest do
       setup_mock()
       Workshop.agent(:monitor, "Monitor")
       Workshop.every(:monitor, "check", interval: 100)
+
+      # Get the pid before stopping so we can wait for cleanup
+      [{pid, _}] = Registry.lookup(AgentWorkshop.Scheduler.Registry, :monitor)
+      ref = Process.monitor(pid)
       Workshop.cancel(:monitor)
+      assert_receive {:DOWN, ^ref, :process, ^pid, _}, 1000
+
       refute :monitor in AgentWorkshop.Scheduler.list_all()
     end
 

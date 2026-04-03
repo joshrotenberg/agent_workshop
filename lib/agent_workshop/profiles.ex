@@ -22,6 +22,9 @@ defmodule AgentWorkshop.Profiles do
   @type profile_def :: %{role: String.t() | nil, opts: keyword()}
 
   @doc false
+  def table_name, do: @table
+
+  @doc false
   def create_table do
     if :ets.info(@table) == :undefined do
       :ets.new(@table, [:named_table, :public, :set])
