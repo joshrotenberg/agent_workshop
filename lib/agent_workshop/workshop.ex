@@ -86,6 +86,7 @@ defmodule AgentWorkshop.Workshop do
   """
 
   alias AgentWorkshop.{Budget, Profiles, PubSub, Scheduler, Store, Telemetry, Work}
+  alias AgentWorkshop.Workshop.Display
 
   @table :agent_workshop_agents
   @state :agent_workshop_state
@@ -1933,134 +1934,21 @@ defmodule AgentWorkshop.Workshop do
     end
   end
 
-  # ── Internal: Display ─────────────────────────────────────────
+  # ── Internal: Display (delegated to AgentWorkshop.Workshop.Display) ──
 
-  defp print_result(name, result) do
-    IO.puts("")
-    IO.puts(result.result)
-    IO.puts("")
-
-    cost_str = if result.cost_usd, do: format_cost(result.cost_usd), else: "n/a"
-
-    IO.puts(
-      IO.ANSI.yellow() <>
-        "(#{inspect(name)}: #{cost_str} this turn)" <>
-        IO.ANSI.reset()
-    )
-  end
-
-  defp print_error(msg) do
-    IO.puts(IO.ANSI.red() <> msg <> IO.ANSI.reset())
-  end
-
-  defp print_info(msg) do
-    IO.puts(IO.ANSI.yellow() <> msg <> IO.ANSI.reset())
-  end
-
-  defp format_status(%{status: :working, queue: [_ | _] = queue}),
-    do: "working +#{length(queue)}"
-
-  defp format_status(%{status: status}), do: to_string(status)
-
-  defp format_cost(amount) when is_number(amount) do
-    "$#{:erlang.float_to_binary(amount / 1, decimals: 2)}"
-  end
-
-  defp format_cost(_), do: "$0.00"
-
-  defp truncate(str, max) do
-    if String.length(str) > max do
-      String.slice(str, 0, max - 3) <> "..."
-    else
-      str
-    end
-  end
-
-  defp plural(1), do: ""
-  defp plural(_), do: "s"
-
-  defp print_event(entry) do
-    time = Calendar.strftime(entry.timestamp, "%H:%M:%S")
-    IO.puts(IO.ANSI.cyan() <> "#{time} #{entry.formatted}" <> IO.ANSI.reset())
-  end
-
-  defp print_profile({name, %{role: role, opts: opts}}) do
-    model = Keyword.get(opts, :model, "default")
-    print_info("#{inspect(name)}: #{role || "(no role)"} [#{model}]")
-  end
-
-  defp print_work_item(item) do
-    status_color =
-      case item.status do
-        :done -> IO.ANSI.green()
-        :failed -> IO.ANSI.red()
-        :in_progress -> IO.ANSI.yellow()
-        :ready -> IO.ANSI.cyan()
-        :blocked -> IO.ANSI.light_black()
-        _ -> ""
-      end
-
-    claimed = if item.claimed_by, do: " (#{item.claimed_by})", else: ""
-    deps = if item.depends_on != [], do: " deps: #{inspect(item.depends_on)}", else: ""
-
-    IO.puts(
-      "  #{status_color}[#{item.status}]#{IO.ANSI.reset()} " <>
-        "#{inspect(item.id)} - #{item.title}" <>
-        " [#{item.type}]#{claimed}#{deps}"
-    )
-  end
-
-  defp print_worker_info(info) do
-    current = if info.current_item, do: " (working on #{inspect(info.current_item)})", else: ""
-
-    print_info(
-      "#{inspect(info.agent_name)}: #{info.work_type}, #{info.claims_completed} completed#{current}"
-    )
-  end
-
-  defp print_schedule_info(info) do
-    last =
-      if info.last_run_at,
-        do: Calendar.strftime(info.last_run_at, "%H:%M:%S"),
-        else: "never"
-
-    print_info(
-      "#{inspect(info.agent)}: every #{format_interval(info.interval)}, #{info.run_count} runs, last: #{last}"
-    )
-  end
-
-  defp format_interval(ms) when ms >= 3_600_000, do: "#{div(ms, 3_600_000)}h"
-  defp format_interval(ms) when ms >= 60_000, do: "#{div(ms, 60_000)}m"
-  defp format_interval(ms) when ms >= 1_000, do: "#{div(ms, 1_000)}s"
-  defp format_interval(ms), do: "#{ms}ms"
-
-  defp print_turn({turn, i}) do
-    cost_str = if turn.cost_usd, do: " (#{format_cost(turn.cost_usd)})", else: ""
-    error_str = if turn.is_error, do: " [error]", else: ""
-
-    IO.puts(IO.ANSI.cyan() <> "--- Turn #{i}#{cost_str}#{error_str} ---" <> IO.ANSI.reset())
-    IO.puts(turn.result)
-    IO.puts("")
-  end
-
-  defp print_table(header, rows) do
-    all = [header | rows]
-
-    widths =
-      0..(tuple_size(header) - 1)
-      |> Enum.map(fn i ->
-        all |> Enum.map(fn row -> String.length(elem(row, i)) end) |> Enum.max()
-      end)
-
-    fmt_row = fn row ->
-      0..(tuple_size(row) - 1)
-      |> Enum.map_join(" | ", fn i -> String.pad_trailing(elem(row, i), Enum.at(widths, i)) end)
-    end
-
-    separator = Enum.map_join(widths, "-+-", &String.duplicate("-", &1))
-
-    IO.puts(fmt_row.(header))
-    IO.puts(separator)
-    Enum.each(rows, fn row -> IO.puts(fmt_row.(row)) end)
-  end
+  defp print_result(name, result), do: Display.print_result(name, result)
+  defp print_error(msg), do: Display.print_error(msg)
+  defp print_info(msg), do: Display.print_info(msg)
+  defp format_status(entry), do: Display.format_status(entry)
+  defp format_cost(amount), do: Display.format_cost(amount)
+  defp truncate(str, max), do: Display.truncate(str, max)
+  defp plural(n), do: Display.plural(n)
+  defp print_event(entry), do: Display.print_event(entry)
+  defp print_profile(data), do: Display.print_profile(data)
+  defp print_work_item(item), do: Display.print_work_item(item)
+  defp print_worker_info(info), do: Display.print_worker_info(info)
+  defp print_schedule_info(info), do: Display.print_schedule_info(info)
+  defp format_interval(ms), do: Display.format_interval(ms)
+  defp print_turn(data), do: Display.print_turn(data)
+  defp print_table(header, rows), do: Display.print_table(header, rows)
 end

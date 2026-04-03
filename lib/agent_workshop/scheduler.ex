@@ -91,6 +91,16 @@ defmodule AgentWorkshop.Scheduler do
   end
 
   @impl true
+  # Task result messages from cast — ignore
+  def handle_info({ref, _result}, state) when is_reference(ref) do
+    Process.demonitor(ref, [:flush])
+    {:noreply, state}
+  end
+
+  def handle_info({:DOWN, _ref, :process, _pid, _reason}, state) do
+    {:noreply, state}
+  end
+
   def handle_info(:tick, state) do
     # Skip if agent is busy (don't pile up)
     try do
