@@ -523,10 +523,10 @@ defmodule AgentWorkshop.WorkshopTest do
 
     test "schedules/0 works" do
       setup_mock()
-      Workshop.agent(:monitor, "Monitor")
-      Workshop.every(:monitor, "check", interval: 60_000)
+      Workshop.agent(:poller, "Poller")
+      Workshop.every(:poller, "check", interval: 60_000)
       assert is_list(Workshop.schedules())
-      Workshop.cancel(:monitor)
+      Workshop.cancel(:poller)
     end
   end
 
