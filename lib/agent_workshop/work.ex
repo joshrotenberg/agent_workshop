@@ -75,6 +75,8 @@ defmodule AgentWorkshop.Work do
     :result,
     :error,
     :created_at,
+    :claimed_at,
+    :started_at,
     :completed_at,
     status: :new,
     priority: 3,
@@ -93,6 +95,8 @@ defmodule AgentWorkshop.Work do
           result: String.t() | nil,
           error: String.t() | nil,
           created_at: DateTime.t(),
+          claimed_at: DateTime.t() | nil,
+          started_at: DateTime.t() | nil,
           completed_at: DateTime.t() | nil
         }
 
@@ -182,7 +186,13 @@ defmodule AgentWorkshop.Work do
         {:error, :not_found}
 
       [{^id, %{status: :ready} = item}] ->
-        claimed = %{item | status: :claimed, claimed_by: agent_name}
+        claimed = %{
+          item
+          | status: :claimed,
+            claimed_by: agent_name,
+            claimed_at: DateTime.utc_now()
+        }
+
         :ets.insert(@table, {id, claimed})
         PubSub.broadcast({:work, :claimed, id, agent_name})
         :ok
@@ -204,7 +214,7 @@ defmodule AgentWorkshop.Work do
         {:error, :not_found}
 
       %{status: :claimed} = item ->
-        update(id, %{item | status: :in_progress})
+        update(id, %{item | status: :in_progress, started_at: DateTime.utc_now()})
         PubSub.broadcast({:work, :started, id})
         :ok
 
@@ -330,6 +340,8 @@ defmodule AgentWorkshop.Work do
       "result" => item.result,
       "error" => item.error,
       "created_at" => if(item.created_at, do: DateTime.to_iso8601(item.created_at)),
+      "claimed_at" => if(item.claimed_at, do: DateTime.to_iso8601(item.claimed_at)),
+      "started_at" => if(item.started_at, do: DateTime.to_iso8601(item.started_at)),
       "completed_at" => if(item.completed_at, do: DateTime.to_iso8601(item.completed_at))
     }
   end
@@ -349,6 +361,8 @@ defmodule AgentWorkshop.Work do
       result: map["result"],
       error: map["error"],
       created_at: parse_datetime(map["created_at"]),
+      claimed_at: parse_datetime(map["claimed_at"]),
+      started_at: parse_datetime(map["started_at"]),
       completed_at: parse_datetime(map["completed_at"])
     }
   end

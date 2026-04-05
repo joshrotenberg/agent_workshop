@@ -191,13 +191,13 @@ defmodule AgentWorkshop.WorkshopTest do
   describe "status/0" do
     test "works with no agents" do
       setup_mock()
-      assert :ok = Workshop.status()
+      assert [] = Workshop.status()
     end
 
     test "works with agents" do
       setup_mock()
       Workshop.agent(:impl)
-      assert :ok = Workshop.status()
+      assert [%{name: :impl}] = Workshop.status()
     end
   end
 
@@ -356,7 +356,7 @@ defmodule AgentWorkshop.WorkshopTest do
     test "store shows entries" do
       setup_mock()
       Workshop.put(:spec, "cache")
-      assert :ok = Workshop.store()
+      assert [{:spec, "cache"}] = Workshop.store()
     end
 
     test "namespaced keys" do
@@ -478,7 +478,7 @@ defmodule AgentWorkshop.WorkshopTest do
     test "events/0 displays" do
       setup_mock()
       Workshop.agent(:impl, "Coder")
-      assert :ok = Workshop.events()
+      assert is_list(Workshop.events())
     end
 
     test "clear_events/0 clears" do
@@ -525,7 +525,7 @@ defmodule AgentWorkshop.WorkshopTest do
       setup_mock()
       Workshop.agent(:monitor, "Monitor")
       Workshop.every(:monitor, "check", interval: 60_000)
-      assert :ok = Workshop.schedules()
+      assert is_list(Workshop.schedules())
       Workshop.cancel(:monitor)
     end
   end
@@ -552,13 +552,13 @@ defmodule AgentWorkshop.WorkshopTest do
 
     test "budget/0 shows global info" do
       setup_mock()
-      assert :ok = Workshop.budget()
+      assert %{spent: _} = Workshop.budget()
     end
 
     test "budget/1 shows agent info" do
       setup_mock()
       Workshop.agent(:impl, "Coder")
-      assert :ok = Workshop.budget(:impl)
+      assert %{} = Workshop.budget(:impl)
     end
 
     test "reset_budget clears limits" do
@@ -636,6 +636,29 @@ defmodule AgentWorkshop.WorkshopTest do
       assert item.completed_at != nil
     end
 
+    test "claim sets claimed_at timestamp" do
+      setup_mock()
+      Workshop.agent(:impl, "Coder")
+      Workshop.work(:cache, "Implement cache", type: :code)
+      Workshop.claim_work(:cache, :impl)
+
+      item = Workshop.work_item(:cache)
+      assert item.claimed_at != nil
+      assert item.claimed_by == :impl
+    end
+
+    test "start_work sets started_at timestamp" do
+      setup_mock()
+      Workshop.agent(:impl, "Coder")
+      Workshop.work(:cache, "Implement cache", type: :code)
+      Workshop.claim_work(:cache, :impl)
+      Workshop.start_work(:cache)
+
+      item = Workshop.work_item(:cache)
+      assert item.started_at != nil
+      assert item.status == :in_progress
+    end
+
     test "fail blocks dependents" do
       setup_mock()
       Workshop.agent(:impl, "Coder")
@@ -680,12 +703,12 @@ defmodule AgentWorkshop.WorkshopTest do
     test "board display works" do
       setup_mock()
       Workshop.work(:cache, "Implement cache", type: :code)
-      assert :ok = Workshop.board()
+      assert [%AgentWorkshop.Work{id: :cache}] = Workshop.board()
     end
 
     test "board display with empty board" do
       setup_mock()
-      assert :ok = Workshop.board()
+      assert [] = Workshop.board()
     end
 
     test "priority ordering" do
@@ -723,6 +746,29 @@ defmodule AgentWorkshop.WorkshopTest do
       assert summary[:ready] == 2
       assert summary[:new] == 1
     end
+
+    test "work_from_result creates work item from agent output" do
+      setup_mock()
+      Workshop.agent(:arch, "Architect")
+      Workshop.ask(:arch, "review this")
+
+      Workshop.work_from_result(:arch, :refactor, type: :code, title: "Fix findings")
+
+      item = Workshop.work_item(:refactor)
+      assert item != nil
+      assert item.title == "Fix findings"
+      assert item.type == :code
+      assert item.spec =~ "Mock response to: review this"
+    end
+
+    test "work_from_result raises with no result" do
+      setup_mock()
+      Workshop.agent(:arch, "Architect")
+
+      assert_raise ArgumentError, ~r/has no result/, fn ->
+        Workshop.work_from_result(:arch, :refactor)
+      end
+    end
   end
 
   describe "profiles" do
@@ -730,7 +776,7 @@ defmodule AgentWorkshop.WorkshopTest do
       setup_mock()
       Workshop.profile(:coder, "You write code.", max_turns: 15)
       Workshop.profile(:reviewer, "Review only.", model: "opus")
-      assert :ok = Workshop.profiles()
+      assert is_list(Workshop.profiles())
       assert :coder in AgentWorkshop.Profiles.list()
       assert :reviewer in AgentWorkshop.Profiles.list()
     end

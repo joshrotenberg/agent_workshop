@@ -691,18 +691,18 @@ defmodule AgentWorkshop.Workshop do
       :ok
   """
   def store do
-    case Store.entries() do
-      [] ->
-        print_info("Store is empty.")
+    entries = Store.entries()
 
-      entries ->
-        Enum.each(entries, fn {key, value} ->
-          val_str = inspect(value, limit: 80, printable_limit: 200)
-          IO.puts("  #{inspect(key)}: #{val_str}")
-        end)
+    if entries == [] do
+      print_info("Store is empty.")
+    else
+      Enum.each(entries, fn {key, value} ->
+        val_str = inspect(value, limit: 80, printable_limit: 200)
+        IO.puts("  #{inspect(key)}: #{val_str}")
+      end)
     end
 
-    :ok
+    entries
   end
 
   # ── Event Log ─────────────────────────────────────────────────
@@ -749,7 +749,7 @@ defmodule AgentWorkshop.Workshop do
       events()            # last 20
       events(last: 50)    # last 50
   """
-  @spec events(keyword()) :: :ok
+  @spec events(keyword()) :: [map()]
   def events(opts \\ []) do
     entries = AgentWorkshop.EventLog.recent(opts)
 
@@ -761,7 +761,7 @@ defmodule AgentWorkshop.Workshop do
       |> Enum.each(&print_event/1)
     end
 
-    :ok
+    entries
   end
 
   @doc """
@@ -812,20 +812,22 @@ defmodule AgentWorkshop.Workshop do
   @doc """
   List active schedules.
   """
-  @spec schedules() :: :ok
+  @spec schedules() :: [map()]
   def schedules do
     agents = Scheduler.list_all()
 
-    if agents == [] do
-      print_info("No active schedules.")
-    else
+    infos =
       agents
       |> Enum.map(&Scheduler.get_info/1)
       |> Enum.reject(&is_nil/1)
-      |> Enum.each(&print_schedule_info/1)
+
+    if infos == [] do
+      print_info("No active schedules.")
+    else
+      Enum.each(infos, &print_schedule_info/1)
     end
 
-    :ok
+    infos
   end
 
   @doc """
@@ -857,7 +859,7 @@ defmodule AgentWorkshop.Workshop do
       budget()          # global budget info
       budget(:impl)     # per-agent budget
   """
-  @spec budget(atom() | :global) :: :ok
+  @spec budget(atom() | :global) :: map()
   def budget(target \\ :global)
 
   def budget(:global) do
@@ -872,7 +874,7 @@ defmodule AgentWorkshop.Workshop do
       print_info("Global: no budget set (spent $#{Float.round(info.spent, 2)})")
     end
 
-    :ok
+    info
   end
 
   def budget(name) when is_atom(name) do
@@ -892,7 +894,7 @@ defmodule AgentWorkshop.Workshop do
       )
     end
 
-    :ok
+    agent_info
   end
 
   @doc """
@@ -955,20 +957,22 @@ defmodule AgentWorkshop.Workshop do
   @doc """
   List available profiles.
   """
-  @spec profiles() :: :ok
+  @spec profiles() :: [{atom(), map()}]
   def profiles do
     names = Profiles.list()
 
-    if names == [] do
-      print_info("No profiles defined.")
-    else
+    entries =
       names
       |> Enum.map(&{&1, Profiles.get(&1)})
       |> Enum.reject(fn {_, v} -> is_nil(v) end)
-      |> Enum.each(&print_profile/1)
+
+    if entries == [] do
+      print_info("No profiles defined.")
+    else
+      Enum.each(entries, &print_profile/1)
     end
 
-    :ok
+    entries
   end
 
   # ── Work Board ────────────────────────────────────────────────
@@ -1006,7 +1010,7 @@ defmodule AgentWorkshop.Workshop do
       board(status: :ready)      # items ready to pick up
       board(type: :code)         # only code tasks
   """
-  @spec board(keyword()) :: :ok
+  @spec board(keyword()) :: [Work.t()]
   def board(filters \\ []) do
     items = Work.list(filters)
 
@@ -1020,7 +1024,7 @@ defmodule AgentWorkshop.Workshop do
       print_info(parts)
     end
 
-    :ok
+    items
   end
 
   @doc """
@@ -1168,6 +1172,29 @@ defmodule AgentWorkshop.Workshop do
     Work.get(id)
   end
 
+  @doc """
+  Create a work item from an agent's last result.
+
+  Uses `result(agent_name)` as the spec for the new work item.
+  Useful for turning an agent's analysis, plan, or review into
+  actionable board items.
+
+  ## Examples
+
+      ask(:arch, "Review the architecture of this project")
+      work_from_result(:arch, :refactor, type: :code, title: "Address architecture findings")
+
+      ask(:planner, "Break this feature into tasks")
+      work_from_result(:planner, :feature_impl, type: :code)
+  """
+  @spec work_from_result(atom(), atom(), keyword()) :: :ok
+  def work_from_result(agent_name, work_id, opts \\ []) do
+    spec = result(agent_name) || raise ArgumentError, "#{inspect(agent_name)} has no result"
+    title = Keyword.get(opts, :title, "From #{agent_name} result")
+    opts = Keyword.put(Keyword.delete(opts, :title), :spec, spec)
+    Work.add(work_id, title, opts)
+  end
+
   # ── Board Workers ────────────────────────────────────────────
 
   @doc """
@@ -1230,20 +1257,22 @@ defmodule AgentWorkshop.Workshop do
         :reviewer_1: review, 1 completed (working on :cache_review)
       :ok
   """
-  @spec workers() :: :ok
+  @spec workers() :: [map()]
   def workers do
     names = AgentWorkshop.BoardWorker.list_all()
 
-    if names == [] do
-      print_info("No board workers.")
-    else
+    infos =
       names
       |> Enum.map(&AgentWorkshop.BoardWorker.get_info/1)
       |> Enum.reject(&is_nil/1)
-      |> Enum.each(&print_worker_info/1)
+
+    if infos == [] do
+      print_info("No board workers.")
+    else
+      Enum.each(infos, &print_worker_info/1)
     end
 
-    :ok
+    infos
   end
 
   # ── Interaction ───────────────────────────────────────────────
@@ -1389,7 +1418,7 @@ defmodule AgentWorkshop.Workshop do
        :reviewer | idle    |                                      | $0.00 | 0
        :tests    | idle    |                                      | $0.04 | 2
   """
-  @spec status() :: :ok
+  @spec status() :: [map()]
   def status do
     entries = :ets.tab2list(@table) |> Enum.sort_by(&elem(&1, 0))
 
@@ -1412,7 +1441,15 @@ defmodule AgentWorkshop.Workshop do
       print_table(header, rows)
     end
 
-    :ok
+    Enum.map(entries, fn {name, e} ->
+      %{
+        name: name,
+        status: e.status,
+        task: e.task_text,
+        cost: e.cumulative_cost,
+        turns: e.turn_count
+      }
+    end)
   end
 
   @doc """
@@ -1508,7 +1545,9 @@ defmodule AgentWorkshop.Workshop do
       )
     end)
 
-    total_cost()
+    total = total_cost()
+    print_info("Total: #{format_cost(total)}")
+    total
   end
 
   @doc """
@@ -1516,13 +1555,9 @@ defmodule AgentWorkshop.Workshop do
   """
   @spec total_cost() :: float()
   def total_cost do
-    total =
-      :ets.tab2list(@table)
-      |> Enum.map(fn {_name, e} -> e.cumulative_cost end)
-      |> Enum.sum()
-
-    print_info("Total: #{format_cost(total)}")
-    total
+    :ets.tab2list(@table)
+    |> Enum.map(fn {_name, e} -> e.cumulative_cost end)
+    |> Enum.sum()
   end
 
   @doc """
