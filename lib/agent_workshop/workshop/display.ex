@@ -68,12 +68,45 @@ defmodule AgentWorkshop.Workshop.Display do
 
     claimed = if item.claimed_by, do: " (#{item.claimed_by})", else: ""
     deps = if item.depends_on != [], do: " deps: #{inspect(item.depends_on)}", else: ""
+    elapsed = format_elapsed(item)
 
     IO.puts(
       "  #{status_color}[#{item.status}]#{IO.ANSI.reset()} " <>
         "#{inspect(item.id)} - #{item.title}" <>
-        " [#{item.type}]#{claimed}#{deps}"
+        " [#{item.type}]#{claimed}#{elapsed}#{deps}"
     )
+  end
+
+  def format_elapsed(%{status: :in_progress, started_at: started_at}) when started_at != nil do
+    " #{elapsed_since(started_at)}"
+  end
+
+  def format_elapsed(%{status: :claimed, claimed_at: claimed_at}) when claimed_at != nil do
+    " #{elapsed_since(claimed_at)}"
+  end
+
+  def format_elapsed(%{status: :done, started_at: started_at, completed_at: completed_at})
+      when started_at != nil and completed_at != nil do
+    seconds = DateTime.diff(completed_at, started_at)
+    " (took #{format_duration(seconds)})"
+  end
+
+  def format_elapsed(_), do: ""
+
+  defp elapsed_since(start) do
+    seconds = DateTime.diff(DateTime.utc_now(), start)
+    "(#{format_duration(seconds)} ago)"
+  end
+
+  defp format_duration(seconds) when seconds < 60, do: "#{seconds}s"
+
+  defp format_duration(seconds) when seconds < 3600,
+    do: "#{div(seconds, 60)}m#{rem(seconds, 60)}s"
+
+  defp format_duration(seconds) do
+    hours = div(seconds, 3600)
+    mins = div(rem(seconds, 3600), 60)
+    "#{hours}h#{mins}m"
   end
 
   def print_worker_info(info) do
