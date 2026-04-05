@@ -694,27 +694,36 @@ defmodule AgentWorkshop.Workshop do
   defp inject_git_context do
     git_mod = AgentWorkshop.GitContext
 
-    unless Code.ensure_loaded?(git_mod) do
-      print_error("Git context requires the git dep. Add {:git, \"~> 0.1\"} to mix.exs.")
-      return_early()
+    if Code.ensure_loaded?(git_mod) do
+      apply_git_context(git_mod)
+    else
+      print_error("Git context requires the git dep. Add {:git, \"~> 0.2\"} to mix.exs.")
     end
+  end
 
+  defp apply_git_context(git_mod) do
     case git_mod.build() do
       nil ->
         :ok
 
       git_ctx ->
         current = :persistent_term.get({AgentWorkshop, :context}, nil)
-        new_context = if current, do: current <> "\n\n" <> git_ctx, else: git_ctx
+        base = strip_git_context(current)
+        new_context = if base, do: base <> "\n\n" <> git_ctx, else: git_ctx
         :persistent_term.put({AgentWorkshop, :context}, new_context)
         line_count = git_ctx |> String.split("\n") |> length()
         print_info("Git context injected (#{line_count} lines)")
     end
-  catch
-    :early -> :ok
   end
 
-  defp return_early, do: throw(:early)
+  defp strip_git_context(nil), do: nil
+
+  defp strip_git_context(context) do
+    case String.split(context, "\n## Git Context\n", parts: 2) do
+      [base, _] -> String.trim_trailing(base)
+      [_] -> context
+    end
+  end
 
   # ── Shared State ──────────────────────────────────────────────
 

@@ -32,8 +32,9 @@ if Code.ensure_loaded?(Git) do
       config = build_config(opts)
 
       with {:ok, info} <- safe_summary(config),
-           {:ok, status} <- safe_status(config) do
-        format_context(info, status, config)
+           {:ok, status} <- safe_status(config),
+           {:ok, commits} <- safe_log(config, 5) do
+        format_context(info, status, commits)
       else
         _ -> nil
       end
@@ -110,12 +111,12 @@ if Code.ensure_loaded?(Git) do
       _ -> {:error, :git_unavailable}
     end
 
-    defp format_context(info, status, config) do
+    defp format_context(info, status, commits) do
       sections = [
         format_branch(info),
         format_tracking(info),
         format_files(info, status),
-        format_recent_commits(config)
+        format_recent_commits(commits)
       ]
 
       context =
@@ -178,18 +179,14 @@ if Code.ensure_loaded?(Git) do
       end
     end
 
-    defp format_recent_commits(config) do
-      case safe_log(config, 5) do
-        {:ok, commits} when commits != [] ->
-          lines =
-            commits
-            |> Enum.map_join("\n", fn c -> "  #{c.abbreviated_hash} #{c.subject}" end)
+    defp format_recent_commits([]), do: nil
 
-          "Recent commits:\n#{lines}"
+    defp format_recent_commits(commits) do
+      lines =
+        commits
+        |> Enum.map_join("\n", fn c -> "  #{c.abbreviated_hash} #{c.subject}" end)
 
-        _ ->
-          nil
-      end
+      "Recent commits:\n#{lines}"
     end
   end
 end
