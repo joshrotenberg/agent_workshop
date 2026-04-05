@@ -67,6 +67,7 @@ if Code.ensure_loaded?(Phoenix.Component) do
             <a href="/board" class={if assigns[:active_tab] == :board, do: "active"}>Board</a>
             <a href="/workers" class={if assigns[:active_tab] == :workers, do: "active"}>Workers</a>
             <a href="/config" class={if assigns[:active_tab] == :config, do: "active"}>Config</a>
+            <a href="/reference" class={if assigns[:active_tab] == :reference, do: "active"}>Reference</a>
           </nav>
           <main>
             {@inner_content}
