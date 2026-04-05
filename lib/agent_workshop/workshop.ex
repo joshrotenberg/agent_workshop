@@ -101,7 +101,8 @@ defmodule AgentWorkshop.Workshop do
     :max_cost_usd,
     :timeout,
     :persistence,
-    :dashboard
+    :dashboard,
+    :git_context
   ]
   @max_queue_size 5
   @valid_permission_modes [:default, :accept_edits, :bypass_permissions, :dont_ask, :plan, :auto]
@@ -152,7 +153,7 @@ defmodule AgentWorkshop.Workshop do
   end
 
   defp reset_global_state do
-    for key <- [:backend, :backend_config, :query_opts, :context] do
+    for key <- [:backend, :backend_config, :query_opts, :context, :git_context] do
       :persistent_term.put({AgentWorkshop, key}, default_for(key))
     end
   end
@@ -235,6 +236,7 @@ defmodule AgentWorkshop.Workshop do
     {max_cost_usd, opts} = Keyword.pop(opts, :max_cost_usd)
     {persistence, opts} = Keyword.pop(opts, :persistence)
     {dashboard_opts, opts} = Keyword.pop(opts, :dashboard)
+    {git_context, opts} = Keyword.pop(opts, :git_context)
     query_opts = opts
     validate_opts!(query_opts)
 
@@ -259,6 +261,8 @@ defmodule AgentWorkshop.Workshop do
     if dashboard_opts do
       dashboard(dashboard_opts)
     end
+
+    configure_git_context(git_context)
 
     :ok
   end
@@ -641,6 +645,76 @@ defmodule AgentWorkshop.Workshop do
       {:error, :deps_missing}
     end
   end
+
+  # ── Git Context ───────────────────────────────────────────────
+
+  @doc """
+  Get a structured summary of the current git state.
+
+  Returns branch, status, recent commits, and file changes.
+  Requires the optional `git` dependency.
+
+  ## Example
+
+      git_summary()
+      # => %{branch: "main", dirty: true, staged: 1, ...}
+  """
+  @spec git_summary(keyword()) :: {:ok, map()} | {:error, term()}
+  def git_summary(opts \\ []) do
+    git_mod = AgentWorkshop.GitContext
+
+    if Code.ensure_loaded?(git_mod) do
+      git_mod.summary(opts)
+    else
+      {:error, :git_dep_missing}
+    end
+  end
+
+  @doc """
+  Get uncommitted changes as a diff string.
+  """
+  @spec git_diff(keyword()) :: {:ok, String.t()} | {:error, term()}
+  def git_diff(opts \\ []) do
+    git_mod = AgentWorkshop.GitContext
+
+    if Code.ensure_loaded?(git_mod) do
+      git_mod.changes(opts)
+    else
+      {:error, :git_dep_missing}
+    end
+  end
+
+  defp configure_git_context(nil), do: :ok
+
+  defp configure_git_context(git_context) do
+    :persistent_term.put({AgentWorkshop, :git_context}, git_context)
+    if git_context, do: inject_git_context()
+  end
+
+  defp inject_git_context do
+    git_mod = AgentWorkshop.GitContext
+
+    unless Code.ensure_loaded?(git_mod) do
+      print_error("Git context requires the git dep. Add {:git, \"~> 0.1\"} to mix.exs.")
+      return_early()
+    end
+
+    case git_mod.build() do
+      nil ->
+        :ok
+
+      git_ctx ->
+        current = :persistent_term.get({AgentWorkshop, :context}, nil)
+        new_context = if current, do: current <> "\n\n" <> git_ctx, else: git_ctx
+        :persistent_term.put({AgentWorkshop, :context}, new_context)
+        line_count = git_ctx |> String.split("\n") |> length()
+        print_info("Git context injected (#{line_count} lines)")
+    end
+  catch
+    :early -> :ok
+  end
+
+  defp return_early, do: throw(:early)
 
   # ── Shared State ──────────────────────────────────────────────
 

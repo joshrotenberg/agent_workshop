@@ -19,6 +19,7 @@ if Code.ensure_loaded?(Phoenix.Router) do
       live("/board", BoardLive)
       live("/workers", WorkersLive)
       live("/config", ConfigLive)
+      live("/git", GitLive)
       live("/reference", ReferenceLive)
     end
   end
