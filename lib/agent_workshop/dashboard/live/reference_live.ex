@@ -135,6 +135,16 @@ if Code.ensure_loaded?(Phoenix.LiveView) do
           <.cmd name="clear_events()" desc="Clear event history" />
         </tbody>
       </table>
+
+      <h3>Git</h3>
+      <table>
+        <thead><tr><th>Command</th><th>Description</th></tr></thead>
+        <tbody>
+          <.cmd name="git_summary()" desc="Structured git state: branch, status, commits, files" />
+          <.cmd name="git_diff()" desc="Uncommitted changes as diff text" />
+          <.cmd name="configure(git_context: true)" desc="Auto-inject git state into agent system prompts" />
+        </tbody>
+      </table>
       """
     end
 

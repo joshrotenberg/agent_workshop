@@ -32,6 +32,7 @@ defmodule AgentWorkshop.MixProject do
       # Backends -- optional, users pick what they need
       {:claude_wrapper, "~> 0.3", optional: true},
       {:codex_wrapper, "~> 0.2", optional: true},
+      {:git, "~> 0.2", optional: true},
       {:anubis_mcp, "~> 1.0", optional: true},
       {:bandit, "~> 1.0", optional: true},
       {:plug, "~> 1.16", optional: true},
