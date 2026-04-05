@@ -76,7 +76,7 @@ defmodule AgentWorkshop.Workshop do
 
       Application supervisor (started automatically)
         |-- TableManager (owns ETS tables)
-        |-- Agent (:agent_workshop_state -- global config)
+        |-- :persistent_term (global config -- no process needed)
         |-- Registry (PubSub, Scheduler, BoardWorker)
         |-- EventLog
         |-- DynamicSupervisor (agent sessions)
@@ -89,7 +89,6 @@ defmodule AgentWorkshop.Workshop do
   alias AgentWorkshop.Workshop.Display
 
   @table :agent_workshop_agents
-  @state :agent_workshop_state
   @sessions_sup AgentWorkshop.Workshop.SessionsSupervisor
   @tasks_sup AgentWorkshop.Workshop.TasksSupervisor
 
@@ -100,7 +99,8 @@ defmodule AgentWorkshop.Workshop do
     :workshop_tools,
     :skill,
     :max_cost_usd,
-    :timeout
+    :timeout,
+    :persistence
   ]
   @max_queue_size 5
   @valid_permission_modes [:default, :accept_edits, :bypass_permissions, :dont_ask, :plan, :auto]
@@ -151,8 +151,8 @@ defmodule AgentWorkshop.Workshop do
   end
 
   defp reset_global_state do
-    if Process.whereis(@state) do
-      Agent.update(@state, fn _ -> default_state() end)
+    for key <- [:backend, :backend_config, :query_opts, :context] do
+      :persistent_term.put({AgentWorkshop, key}, default_for(key))
     end
   end
 
@@ -160,6 +160,20 @@ defmodule AgentWorkshop.Workshop do
   def default_state do
     %{backend: nil, backend_config: nil, query_opts: [permission_mode: :auto], context: nil}
   end
+
+  @doc false
+  def init_global_state do
+    defaults = default_state()
+
+    for {key, value} <- defaults do
+      :persistent_term.put({AgentWorkshop, key}, value)
+    end
+
+    :ok
+  end
+
+  defp default_for(:query_opts), do: [permission_mode: :auto]
+  defp default_for(_), do: nil
 
   # ── Configuration ─────────────────────────────────────────────
 
@@ -207,6 +221,9 @@ defmodule AgentWorkshop.Workshop do
 
     * `:context` -- global system prompt prepended to every agent's role.
       The effective system prompt for each agent is `context <> "\\n\\n" <> role`.
+    * `:persistence` -- `true` (use `.agent_workshop/` in cwd), a path string,
+      or `false` to disable. Saves work board and store to disk on change,
+      reloads on next start.
   """
   @spec configure(keyword()) :: :ok
   def configure(opts \\ []) do
@@ -215,23 +232,27 @@ defmodule AgentWorkshop.Workshop do
     {backend_config, opts} = Keyword.pop(opts, :backend_config)
     {mcp_opts, opts} = Keyword.pop(opts, :mcp)
     {max_cost_usd, opts} = Keyword.pop(opts, :max_cost_usd)
+    {persistence, opts} = Keyword.pop(opts, :persistence)
     query_opts = opts
     validate_opts!(query_opts)
 
     # Store config. Backend validation happens in agent/3, not here —
     # configure() can be called incrementally (e.g., set context first, backend later).
-    Agent.update(@state, fn state ->
-      %{
-        state
-        | backend: backend || state.backend,
-          backend_config: backend_config || state.backend_config,
-          query_opts: Keyword.merge(state.query_opts, query_opts),
-          context: context || state.context
-      }
-    end)
+    if backend, do: :persistent_term.put({AgentWorkshop, :backend}, backend)
+    if backend_config, do: :persistent_term.put({AgentWorkshop, :backend_config}, backend_config)
+    if context, do: :persistent_term.put({AgentWorkshop, :context}, context)
+
+    if query_opts != [] do
+      current = :persistent_term.get({AgentWorkshop, :query_opts}, permission_mode: :auto)
+      :persistent_term.put({AgentWorkshop, :query_opts}, Keyword.merge(current, query_opts))
+    end
 
     if max_cost_usd, do: Budget.set_global(max_cost_usd)
     if mcp_opts, do: mcp_server(mcp_opts)
+
+    if persistence != nil do
+      AgentWorkshop.Persistence.enable(persistence)
+    end
 
     :ok
   end
@@ -488,7 +509,7 @@ defmodule AgentWorkshop.Workshop do
   @spec reset_all() :: :ok
   def reset_all do
     agents() |> Enum.each(&dismiss/1)
-    Agent.update(@state, fn _ -> default_state() end)
+    reset_global_state()
     :ok
   end
 
@@ -1831,7 +1852,12 @@ defmodule AgentWorkshop.Workshop do
   # ── Internal: Registry ────────────────────────────────────────
 
   defp get_global_state do
-    Agent.get(@state, & &1)
+    %{
+      backend: :persistent_term.get({AgentWorkshop, :backend}, nil),
+      backend_config: :persistent_term.get({AgentWorkshop, :backend_config}, nil),
+      query_opts: :persistent_term.get({AgentWorkshop, :query_opts}, permission_mode: :auto),
+      context: :persistent_term.get({AgentWorkshop, :context}, nil)
+    }
   end
 
   defp get_agent(name) do

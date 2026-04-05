@@ -313,6 +313,55 @@ defmodule AgentWorkshop.Work do
   @doc false
   def valid_types, do: @valid_types
 
+  # ── Serialization ───────────────────────────────────────────
+
+  @doc false
+  @spec to_map(t()) :: map()
+  def to_map(%__MODULE__{} = item) do
+    %{
+      "id" => Atom.to_string(item.id),
+      "title" => item.title,
+      "spec" => item.spec,
+      "type" => Atom.to_string(item.type),
+      "status" => Atom.to_string(item.status),
+      "priority" => item.priority,
+      "depends_on" => Enum.map(item.depends_on, &Atom.to_string/1),
+      "claimed_by" => if(item.claimed_by, do: Atom.to_string(item.claimed_by)),
+      "result" => item.result,
+      "error" => item.error,
+      "created_at" => if(item.created_at, do: DateTime.to_iso8601(item.created_at)),
+      "completed_at" => if(item.completed_at, do: DateTime.to_iso8601(item.completed_at))
+    }
+  end
+
+  @doc false
+  @spec from_map(map()) :: t()
+  def from_map(map) do
+    %__MODULE__{
+      id: String.to_atom(map["id"]),
+      title: map["title"],
+      spec: map["spec"],
+      type: String.to_atom(map["type"]),
+      status: String.to_atom(map["status"]),
+      priority: map["priority"] || 3,
+      depends_on: Enum.map(map["depends_on"] || [], &String.to_atom/1),
+      claimed_by: if(map["claimed_by"], do: String.to_atom(map["claimed_by"])),
+      result: map["result"],
+      error: map["error"],
+      created_at: parse_datetime(map["created_at"]),
+      completed_at: parse_datetime(map["completed_at"])
+    }
+  end
+
+  defp parse_datetime(nil), do: nil
+
+  defp parse_datetime(str) do
+    case DateTime.from_iso8601(str) do
+      {:ok, dt, _offset} -> dt
+      _ -> nil
+    end
+  end
+
   # ── Internal ────────────────────────────────────────────────
 
   defp update(id, item) do
