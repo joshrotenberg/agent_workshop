@@ -32,12 +32,11 @@ if Code.ensure_loaded?(Phoenix.Endpoint) do
         server: true,
         secret_key_base: generate_secret(),
         live_view: [signing_salt: "workshop_lv"],
-        url: [host: "localhost"]
+        url: [host: "localhost"],
+        adapter: Bandit.PhoenixAdapter
       ]
 
-      for {key, value} <- config do
-        Application.put_env(:agent_workshop, Endpoint, [{key, value}], persistent: true)
-      end
+      Application.put_env(:agent_workshop, Endpoint, config, persistent: true)
 
       case Endpoint.start_link([]) do
         {:ok, pid} ->
