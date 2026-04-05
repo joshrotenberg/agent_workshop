@@ -309,9 +309,14 @@ defmodule AgentWorkshop.Workshop do
 
   ## Options
 
-  Accepts any query option supported by the backend: `:model`,
-  `:max_turns`, `:permission_mode`, `:max_budget_usd`, `:effort`,
-  `:allowed_tools`, `:disallowed_tools`, `:dangerously_skip_permissions`.
+  Core: `:model`, `:max_turns`, `:permission_mode`, `:max_budget_usd`, `:effort`
+
+  Permissions: `:allowed_tools`, `:disallowed_tools`, `:dangerously_skip_permissions`
+
+  Backend pass-through (Claude CLI): `:worktree`, `:mcp_config`, `:add_dir`,
+  `:settings`, `:append_system_prompt`, `:no_session_persistence`
+
+  Workshop-specific: `:workshop_tools`, `:skill`, `:max_cost_usd`, `:timeout`
   """
   @spec agent(atom(), String.t() | nil, keyword()) :: :ok
   def agent(name, role_or_opts \\ nil, opts \\ [])
