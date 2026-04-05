@@ -14,7 +14,9 @@ defmodule AgentWorkshop.Application do
   #                        registry must already be running.
   #   5. Persistence    -- subscribes to PubSub; writes state to disk on change.
   #                        Idle until enabled via configure(persistence: ...).
-  #   6. DynamicSupervisor / TaskSupervisor -- started last because nothing
+  #   6. ProcessMonitor -- monitors agent SessionServer pids; auto-cleans
+  #                        ETS entries when agents crash.
+  #   7. DynamicSupervisor / TaskSupervisor -- started last because nothing
   #                        depends on them at boot; agents are added later via
   #                        Workshop.agent/2.
 
@@ -28,6 +30,7 @@ defmodule AgentWorkshop.Application do
       {Registry, keys: :unique, name: AgentWorkshop.BoardWorker.Registry},
       AgentWorkshop.EventLog,
       AgentWorkshop.Persistence,
+      AgentWorkshop.ProcessMonitor,
       {DynamicSupervisor,
        name: AgentWorkshop.Workshop.SessionsSupervisor, strategy: :one_for_one},
       {Task.Supervisor, name: AgentWorkshop.Workshop.TasksSupervisor}
