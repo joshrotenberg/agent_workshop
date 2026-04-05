@@ -30,7 +30,7 @@ defmodule AgentWorkshop.MixProject do
       {:jason, "~> 1.4"},
       {:telemetry, "~> 1.2"},
       # Backends -- optional, users pick what they need
-      {:claude_wrapper, "~> 0.3", optional: true},
+      {:claude_wrapper, "~> 0.4", optional: true},
       {:codex_wrapper, "~> 0.2", optional: true},
       {:git, "~> 0.2", optional: true},
       {:anubis_mcp, "~> 1.0", optional: true},
