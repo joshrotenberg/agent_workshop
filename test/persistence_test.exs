@@ -244,5 +244,78 @@ defmodule AgentWorkshop.PersistenceTest do
       map = Work.to_map(item)
       assert {:ok, _} = Jason.encode(map)
     end
+
+    test "round-trips claimed_at and started_at timestamps" do
+      now = DateTime.utc_now()
+
+      item = %Work{
+        id: :ts_test,
+        title: "Timestamp test",
+        type: :code,
+        status: :in_progress,
+        depends_on: [],
+        created_at: now,
+        claimed_at: now,
+        started_at: now
+      }
+
+      restored = item |> Work.to_map() |> Work.from_map()
+      assert restored.claimed_at != nil
+      assert restored.started_at != nil
+    end
+
+    test "handles nil optional fields" do
+      item = %Work{
+        id: :nil_test,
+        title: "Nil fields",
+        type: :custom,
+        status: :new,
+        depends_on: []
+      }
+
+      restored = item |> Work.to_map() |> Work.from_map()
+      assert restored.claimed_at == nil
+      assert restored.started_at == nil
+      assert restored.completed_at == nil
+      assert restored.spec == nil
+      assert restored.result == nil
+      assert restored.error == nil
+      assert restored.claimed_by == nil
+    end
+  end
+
+  describe "persistence edge cases" do
+    test "handles corrupt work.json gracefully" do
+      File.mkdir_p!(@test_dir)
+      File.write!(Path.join(@test_dir, "work.json"), "not valid json{{{")
+      Persistence.enable(@test_dir)
+
+      # Should not crash, just skip loading
+      assert Work.list() == []
+    end
+
+    test "handles corrupt store.json gracefully" do
+      File.mkdir_p!(@test_dir)
+      File.write!(Path.join(@test_dir, "store.json"), "broken")
+      Persistence.enable(@test_dir)
+
+      assert Store.entries() == []
+    end
+
+    test "handles empty work.json" do
+      File.mkdir_p!(@test_dir)
+      File.write!(Path.join(@test_dir, "work.json"), "[]")
+      Persistence.enable(@test_dir)
+
+      assert Work.list() == []
+    end
+
+    test "handles empty store.json" do
+      File.mkdir_p!(@test_dir)
+      File.write!(Path.join(@test_dir, "store.json"), "[]")
+      Persistence.enable(@test_dir)
+
+      assert Store.entries() == []
+    end
   end
 end
