@@ -100,7 +100,8 @@ defmodule AgentWorkshop.Workshop do
     :skill,
     :max_cost_usd,
     :timeout,
-    :persistence
+    :persistence,
+    :dashboard
   ]
   @max_queue_size 5
   @valid_permission_modes [:default, :accept_edits, :bypass_permissions, :dont_ask, :plan, :auto]
@@ -233,6 +234,7 @@ defmodule AgentWorkshop.Workshop do
     {mcp_opts, opts} = Keyword.pop(opts, :mcp)
     {max_cost_usd, opts} = Keyword.pop(opts, :max_cost_usd)
     {persistence, opts} = Keyword.pop(opts, :persistence)
+    {dashboard_opts, opts} = Keyword.pop(opts, :dashboard)
     query_opts = opts
     validate_opts!(query_opts)
 
@@ -252,6 +254,10 @@ defmodule AgentWorkshop.Workshop do
 
     if persistence != nil do
       AgentWorkshop.Persistence.enable(persistence)
+    end
+
+    if dashboard_opts do
+      dashboard(dashboard_opts)
     end
 
     :ok
@@ -595,6 +601,43 @@ defmodule AgentWorkshop.Workshop do
       end
     else
       print_error("MCP server requires anubis_mcp, bandit, and plug deps.")
+      {:error, :deps_missing}
+    end
+  end
+
+  # ── Dashboard ─────────────────────────────────────────────────
+
+  @doc """
+  Start the LiveView dashboard.
+
+  ## Options
+
+    * `:port` - HTTP port (default 4223)
+
+  ## Examples
+
+      dashboard()              # start on port 4223
+      dashboard(port: 8080)    # custom port
+  """
+  @spec dashboard(keyword()) :: :ok | {:error, term()}
+  def dashboard(opts \\ [])
+
+  def dashboard(true), do: dashboard([])
+
+  def dashboard(opts) when is_list(opts) do
+    dashboard_mod = AgentWorkshop.Dashboard
+
+    if Code.ensure_loaded?(dashboard_mod) do
+      case dashboard_mod.start(opts) do
+        {:ok, _pid} ->
+          :ok
+
+        {:error, reason} ->
+          print_error("Dashboard failed to start: #{inspect(reason)}")
+          {:error, reason}
+      end
+    else
+      print_error("Dashboard requires phoenix, phoenix_live_view, and phoenix_html deps.")
       {:error, :deps_missing}
     end
   end
