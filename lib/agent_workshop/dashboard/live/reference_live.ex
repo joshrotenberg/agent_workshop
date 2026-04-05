@@ -23,6 +23,7 @@ if Code.ensure_loaded?(Phoenix.LiveView) do
           <.cmd name="stop()" desc="Dismiss all agents, clear state. Supervision tree stays running" />
           <.cmd name="mcp_server(opts)" desc="Start the MCP server (default port 4222)" />
           <.cmd name="dashboard(opts)" desc="Start the LiveView dashboard (default port 4223)" />
+          <.cmd name="log_level(level)" desc="Set log verbosity (:debug, :info, :warning, :error)" />
         </tbody>
       </table>
 

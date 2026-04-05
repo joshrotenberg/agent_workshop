@@ -173,6 +173,14 @@ defmodule AgentWorkshop.EventLog do
     "[cast] #{name} complete #{cost} — #{text}"
   end
 
+  defp format_event({:agent, :error, name, :timeout}) do
+    "[error] #{name}: timed out (agent may be stuck)"
+  end
+
+  defp format_event({:agent, :error, name, {:crash, message}}) do
+    "[error] #{name}: crashed: #{message}"
+  end
+
   defp format_event({:agent, :error, name, reason}) do
     "[error] #{name}: #{inspect(reason)}"
   end
