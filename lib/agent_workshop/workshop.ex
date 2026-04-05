@@ -108,10 +108,27 @@ defmodule AgentWorkshop.Workshop do
   @valid_permission_modes [:default, :accept_edits, :bypass_permissions, :dont_ask, :plan, :auto]
 
   @doc """
+  Set the log level for Workshop messages.
+
+  Useful for quieting debug noise during interactive sessions.
+
+  ## Examples
+
+      log_level(:warning)    # quiet -- only warnings and errors
+      log_level(:info)       # default
+      log_level(:debug)      # verbose -- see send/receive for every message
+  """
+  @spec log_level(Logger.level()) :: :ok
+  def log_level(level) do
+    Logger.put_module_level(__MODULE__, level)
+    :ok
+  end
+
+  @doc """
   Stop the Workshop and clean up all state. Used for teardown in tests.
 
   Dismisses all agents, clears all ETS tables. The Application supervisor
-  remains running — call `configure/1` to set up again.
+  remains running -- call `configure/1` to set up again.
   """
   @spec stop() :: :ok
   def stop do
@@ -1823,7 +1840,7 @@ defmodule AgentWorkshop.Workshop do
 
     start_time = Telemetry.start(:ask, %{agent: name, prompt: prompt})
 
-    Logger.info("[workshop] agent #{inspect(name)} sending message")
+    Logger.debug("[workshop] agent #{inspect(name)} sending message")
 
     result =
       case entry.timeout do
@@ -1842,7 +1859,7 @@ defmodule AgentWorkshop.Workshop do
           end
       end
 
-    Logger.info("[workshop] agent #{inspect(name)} got response")
+    Logger.debug("[workshop] agent #{inspect(name)} got response")
 
     case result do
       {:ok, r} ->
@@ -1870,7 +1887,7 @@ defmodule AgentWorkshop.Workshop do
 
         current = get_agent!(name)
         update_agent(name, %{current | status: :idle, task_text: nil})
-        print_error("#{inspect(name)}: #{inspect(reason)}")
+        print_error("#{inspect(name)}: #{format_agent_error(reason)}")
         err
     end
   end
@@ -1899,7 +1916,7 @@ defmodule AgentWorkshop.Workshop do
       Task.Supervisor.async_nolink(@tasks_sup, fn ->
         start_time = System.monotonic_time()
 
-        Logger.info("[workshop] agent #{inspect(agent_name)} sending message")
+        Logger.debug("[workshop] agent #{inspect(agent_name)} sending message")
 
         result =
           try do
@@ -1908,7 +1925,7 @@ defmodule AgentWorkshop.Workshop do
             e -> {:error, {:crash, Exception.message(e)}}
           end
 
-        Logger.info("[workshop] agent #{inspect(agent_name)} got response")
+        Logger.debug("[workshop] agent #{inspect(agent_name)} got response")
 
         record_async_result(agent_name, result, start_time)
         result
@@ -2146,4 +2163,22 @@ defmodule AgentWorkshop.Workshop do
   defp format_interval(ms), do: Display.format_interval(ms)
   defp print_turn(data), do: Display.print_turn(data)
   defp print_table(header, rows), do: Display.print_table(header, rows)
+
+  defp format_agent_error(:timeout),
+    do: "timed out waiting for response (agent may be stuck -- try dismiss and recreate)"
+
+  defp format_agent_error({:crash, message}),
+    do: "agent crashed: #{message}"
+
+  defp format_agent_error(:budget_exceeded),
+    do: "budget exceeded"
+
+  defp format_agent_error({:exit, reason}),
+    do: "agent process exited: #{inspect(reason)}"
+
+  defp format_agent_error(reason) when is_binary(reason),
+    do: reason
+
+  defp format_agent_error(reason),
+    do: inspect(reason)
 end
