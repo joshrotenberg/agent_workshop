@@ -35,6 +35,10 @@ defmodule AgentWorkshop.MixProject do
       {:anubis_mcp, "~> 1.0", optional: true},
       {:bandit, "~> 1.0", optional: true},
       {:plug, "~> 1.16", optional: true},
+      # Dashboard -- optional LiveView UI
+      {:phoenix, "~> 1.7", optional: true},
+      {:phoenix_live_view, "~> 1.0", optional: true},
+      {:phoenix_html, "~> 4.0", optional: true},
       {:ex_doc, "~> 0.35", only: :dev, runtime: false},
       {:credo, "~> 1.7", only: [:dev, :test], runtime: false}
     ]
