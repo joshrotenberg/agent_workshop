@@ -20,6 +20,16 @@ defmodule AgentWorkshop.Application do
   #                        depends on them at boot; agents are added later via
   #                        Workshop.agent/2.
 
+  # Dialyzer can't see runtime-only Burrito code paths. These functions
+  # are only reachable when running inside a Burrito binary.
+  @dialyzer [
+    {:nowarn_function, start_daemon: 0},
+    {:nowarn_function, daemonize: 0},
+    {:nowarn_function, start_client: 1},
+    {:nowarn_function, burrito_bin_path: 0},
+    {:nowarn_function, await_daemon: 1}
+  ]
+
   @burrito_args Burrito.Util.Args
   @pid_file Path.join(System.tmp_dir!(), "aw.pid")
   @daemon_node :aw@localhost
