@@ -10,7 +10,8 @@ configure(
   mcp: [port: 4222]
 )
 
-agent(:github_sync,
+agent(
+  :github_sync,
   "You are a GitHub sync agent. You bridge GitHub issues and the Workshop board.",
   workshop_tools: true,
   skill: :github,
@@ -18,18 +19,20 @@ agent(:github_sync,
   max_turns: 15
 )
 
-every(:github_sync, """
-Sync GitHub issues to the board.
+every(
+  :github_sync,
+  """
+  Sync GitHub issues to the board.
 
-1. Run: gh issue list --label "agent" --state open --json number,title,body,labels
-2. Run: board() to see existing items
-3. For each issue not already on the board (match by id "gh_<number>"):
-   - add_work(id: "gh_<number>", title: "<issue title>", type: "triage", priority: 3, spec: "<issue body>")
-   - Comment on the issue: gh issue comment <number> --body "Synced to board as gh_<number>"
-4. Report what you synced (or "nothing new" if no new issues)
+  1. Run: gh issue list --label "agent" --state open --json number,title,body,labels
+  2. Run: board() to see existing items
+  3. For each issue not already on the board (match by id "gh_<number>"):
+     - add_work(id: "gh_<number>", title: "<issue title>", type: "triage", priority: 3, spec: "<issue body>")
+     - Comment on the issue: gh issue comment <number> --body "Synced to board as gh_<number>"
+  4. Report what you synced (or "nothing new" if no new issues)
 
-Do NOT re-add issues already on the board in any status.
-""", interval: :timer.minutes(5))
+  Do NOT re-add issues already on the board in any status.
+  """, interval: :timer.minutes(5))
 
 # Optional: board workers to process synced issues.
 # Uncomment to enable automatic processing.
