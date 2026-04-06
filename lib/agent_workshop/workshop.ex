@@ -68,7 +68,7 @@ defmodule AgentWorkshop.Workshop do
 
   ## Architecture
 
-  The OTP Application (`AgentWorkshop.Application`) owns the full lifecycle:
+  The OTP Application owns the full lifecycle:
   ETS tables, registries, supervisors, and the EventLog. Workshop is the
   public IEx facade -- it reads and writes shared state but does not start
   or supervise any infrastructure. Call `configure/1` to set your backend;
