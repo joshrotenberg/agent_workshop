@@ -17,7 +17,8 @@ defmodule AgentWorkshop.MixProject do
       description: "Multi-agent orchestration from IEx. Backend-agnostic, MCP-enabled.",
       dialyzer: [
         plt_file: {:no_warn, "_build/dev/dialyxir_#{System.otp_release()}.plt"}
-      ]
+      ],
+      releases: releases()
     ]
   end
 
@@ -32,6 +33,7 @@ defmodule AgentWorkshop.MixProject do
     [
       {:jason, "~> 1.4"},
       {:telemetry, "~> 1.2"},
+      {:cheer, "~> 0.1.3"},
       # Backends -- optional, users pick what they need
       {:claude_wrapper, "~> 0.4", optional: true},
       {:codex_wrapper, "~> 0.2", optional: true},
@@ -43,6 +45,8 @@ defmodule AgentWorkshop.MixProject do
       {:phoenix, "~> 1.7", optional: true},
       {:phoenix_live_view, "~> 1.0", optional: true},
       {:phoenix_html, "~> 4.0", optional: true},
+      # Binary packaging -- optional
+      {:burrito, "~> 1.0", optional: true},
       {:ex_doc, "~> 0.35", only: :dev, runtime: false},
       {:credo, "~> 1.7", only: [:dev, :test], runtime: false},
       {:dialyxir, "~> 1.4", only: [:dev, :test], runtime: false}
@@ -99,6 +103,25 @@ defmodule AgentWorkshop.MixProject do
         ]
       ]
     ]
+  end
+
+  defp releases do
+    if Code.ensure_loaded?(Burrito) do
+      [
+        aw: [
+          steps: [:assemble, &Burrito.wrap/1],
+          burrito: [
+            targets: [
+              macos: [os: :darwin, cpu: :x86_64],
+              macos_m1: [os: :darwin, cpu: :aarch64],
+              linux: [os: :linux, cpu: :x86_64]
+            ]
+          ]
+        ]
+      ]
+    else
+      []
+    end
   end
 
   defp package do
