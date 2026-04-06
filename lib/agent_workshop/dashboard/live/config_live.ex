@@ -73,7 +73,7 @@ if Code.ensure_loaded?(Phoenix.LiveView) do
 
       <h3>Backend</h3>
       <div class="card">
-        <div class="card-title">{inspect(@backend) || "Not configured"}</div>
+        <div class="card-title">{if @backend, do: inspect(@backend), else: "Not configured"}</div>
         <%= if @context do %>
           <div class="card-meta muted" style="margin-top: 0.5rem;">Context: {String.slice(@context, 0..200)}</div>
         <% end %>
