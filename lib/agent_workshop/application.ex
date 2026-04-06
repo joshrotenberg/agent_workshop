@@ -111,14 +111,14 @@ defmodule AgentWorkshop.Application do
 
   # Client mode: connect to daemon via erpc, run CLI command, exit
   defp start_client(args) do
-    client = :"aw_cli_#{System.system_time(:nanosecond)}@localhost"
-    Node.start(client, :shortnames)
-    Node.set_cookie(@cookie)
-
     mode =
-      case Node.connect(@daemon_node) do
-        true -> :remote
-        false -> :local
+      with client <- :"aw_cli_#{System.system_time(:nanosecond)}@localhost",
+           {:ok, _} <- Node.start(client, :shortnames),
+           true <- Node.set_cookie(@cookie) || true,
+           true <- Node.connect(@daemon_node) do
+        :remote
+      else
+        _ -> :local
       end
 
     if mode == :local do

@@ -106,22 +106,18 @@ defmodule AgentWorkshop.MixProject do
   end
 
   defp releases do
-    if Code.ensure_loaded?(Burrito) do
-      [
-        aw: [
-          steps: [:assemble, &Burrito.wrap/1],
-          burrito: [
-            targets: [
-              macos: [os: :darwin, cpu: :x86_64],
-              macos_m1: [os: :darwin, cpu: :aarch64],
-              linux: [os: :linux, cpu: :x86_64]
-            ]
+    [
+      aw: [
+        steps: [:assemble, &Burrito.wrap/1],
+        burrito: [
+          targets: [
+            macos: [os: :darwin, cpu: :x86_64],
+            macos_m1: [os: :darwin, cpu: :aarch64],
+            linux: [os: :linux, cpu: :x86_64]
           ]
         ]
       ]
-    else
-      []
-    end
+    ]
   end
 
   defp package do
