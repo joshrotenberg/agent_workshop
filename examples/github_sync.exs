@@ -32,7 +32,9 @@ every(
   4. Report what you synced (or "nothing new" if no new issues)
 
   Do NOT re-add issues already on the board in any status.
-  """, interval: :timer.minutes(5))
+  """,
+  interval: :timer.minutes(5)
+)
 
 # Optional: board workers to process synced issues.
 # Uncomment to enable automatic processing.
