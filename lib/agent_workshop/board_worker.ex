@@ -265,7 +265,7 @@ defmodule AgentWorkshop.BoardWorker do
         item.title
       end
 
-    case Map.get(item.metadata || %{}, :from_stages, []) do
+    case Map.get(item.metadata, :from_stages, []) do
       [] -> base
       stage_ids -> append_stage_results(base, stage_ids)
     end
