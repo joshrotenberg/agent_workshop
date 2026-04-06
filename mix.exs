@@ -51,8 +51,53 @@ defmodule AgentWorkshop.MixProject do
 
   defp docs do
     [
-      main: "AgentWorkshop",
-      source_url: @source_url
+      main: "readme",
+      source_url: @source_url,
+      extras: [
+        "README.md",
+        "guides/getting-started.md",
+        "guides/orchestration-patterns.md",
+        "guides/work-board.md",
+        "guides/mcp-server.md",
+        "guides/configuration.md",
+        "CHANGELOG.md",
+        "LICENSE"
+      ],
+      groups_for_extras: [
+        Guides: ~r/guides\/.*/
+      ],
+      groups_for_modules: [
+        "Core API": [
+          AgentWorkshop,
+          AgentWorkshop.Workshop,
+          AgentWorkshop.Backend
+        ],
+        Backends: [
+          AgentWorkshop.Backends.Claude,
+          AgentWorkshop.Backends.Codex
+        ],
+        "Work Board": [
+          AgentWorkshop.Work,
+          AgentWorkshop.BoardWorker,
+          AgentWorkshop.Workflow
+        ],
+        "Agent Configuration": [
+          AgentWorkshop.Profiles,
+          AgentWorkshop.Skills,
+          AgentWorkshop.Budget
+        ],
+        Observability: [
+          AgentWorkshop.EventLog,
+          AgentWorkshop.PubSub,
+          AgentWorkshop.Telemetry
+        ],
+        Infrastructure: [
+          AgentWorkshop.Store,
+          AgentWorkshop.Scheduler,
+          AgentWorkshop.Persistence,
+          AgentWorkshop.GitContext
+        ]
+      ]
     ]
   end
 
@@ -60,7 +105,7 @@ defmodule AgentWorkshop.MixProject do
     [
       licenses: ["MIT"],
       links: %{"GitHub" => @source_url},
-      files: ~w(lib skills AGENTS.md mix.exs README.md LICENSE .formatter.exs),
+      files: ~w(lib skills examples AGENTS.md mix.exs README.md LICENSE .formatter.exs),
       maintainers: ["Josh Rotenberg"]
     ]
   end

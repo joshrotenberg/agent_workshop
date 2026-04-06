@@ -15,7 +15,7 @@ or any CLI-based LLM through a pluggable backend.
 ```elixir
 def deps do
   [
-    {:agent_workshop, "~> 0.2"},
+    {:agent_workshop, "~> 0.3"},
 
     # Pick your backend(s):
     {:claude_wrapper, "~> 0.4"},   # for Claude Code CLI
@@ -122,6 +122,21 @@ work(:feature, "Implement checkout command", type: :code, priority: 1,
 work(:feature_review, "Review checkout", type: :review, depends_on: [:feature])
 # coder claims feature, implements it, marks done
 # feature_review auto-unblocks, reviewer claims it
+```
+
+### 4. Declarative workflows
+
+```elixir
+workflow(:feature, [
+  {:plan, :planner, "Break this into tasks", from: "specs/feature.md"},
+  {:implement, :coder, "Implement the plan", from: :plan, type: :code},
+  {:test, :tester, "Write tests", from: :implement, type: :test},
+  {:review, :reviewer, "Review everything", from: [:implement, :test], type: :review}
+])
+
+run_workflow(:feature)
+workflow_status(:feature)
+reset_workflow(:feature)    # clear and re-run
 ```
 
 ## Work board
@@ -235,6 +250,7 @@ watch()                        # live event stream
 events()                       # event history
 workers()                      # board worker status
 board()                        # work board
+workflows()                    # workflow status
 ```
 
 ## Backends
