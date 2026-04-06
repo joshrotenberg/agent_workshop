@@ -80,7 +80,8 @@ defmodule AgentWorkshop.Work do
     :completed_at,
     status: :new,
     priority: 3,
-    depends_on: []
+    depends_on: [],
+    metadata: %{}
   ]
 
   @type t :: %__MODULE__{
@@ -97,7 +98,8 @@ defmodule AgentWorkshop.Work do
           created_at: DateTime.t(),
           claimed_at: DateTime.t() | nil,
           started_at: DateTime.t() | nil,
-          completed_at: DateTime.t() | nil
+          completed_at: DateTime.t() | nil,
+          metadata: map()
         }
 
   # ── Table management ────────────────────────────────────────
@@ -130,6 +132,7 @@ defmodule AgentWorkshop.Work do
     spec = Keyword.get(opts, :spec)
     priority = Keyword.get(opts, :priority, 3)
     depends_on = Keyword.get(opts, :depends_on, [])
+    metadata = Keyword.get(opts, :metadata, %{})
 
     item = %__MODULE__{
       id: id,
@@ -138,6 +141,7 @@ defmodule AgentWorkshop.Work do
       type: type,
       priority: priority,
       depends_on: depends_on,
+      metadata: metadata,
       created_at: DateTime.utc_now()
     }
 
@@ -339,6 +343,7 @@ defmodule AgentWorkshop.Work do
       "claimed_by" => if(item.claimed_by, do: Atom.to_string(item.claimed_by)),
       "result" => item.result,
       "error" => item.error,
+      "metadata" => serialize_metadata(item.metadata),
       "created_at" => if(item.created_at, do: DateTime.to_iso8601(item.created_at)),
       "claimed_at" => if(item.claimed_at, do: DateTime.to_iso8601(item.claimed_at)),
       "started_at" => if(item.started_at, do: DateTime.to_iso8601(item.started_at)),
@@ -360,6 +365,7 @@ defmodule AgentWorkshop.Work do
       claimed_by: if(map["claimed_by"], do: String.to_atom(map["claimed_by"])),
       result: map["result"],
       error: map["error"],
+      metadata: deserialize_metadata(map["metadata"]),
       created_at: parse_datetime(map["created_at"]),
       claimed_at: parse_datetime(map["claimed_at"]),
       started_at: parse_datetime(map["started_at"]),
@@ -438,4 +444,27 @@ defmodule AgentWorkshop.Work do
   end
 
   defp apply_filters(items, [_ | rest]), do: apply_filters(items, rest)
+
+  defp serialize_metadata(nil), do: %{}
+
+  defp serialize_metadata(meta) when is_map(meta) do
+    Map.new(meta, fn
+      {k, v} when is_atom(k) -> {Atom.to_string(k), serialize_meta_value(v)}
+      {k, v} -> {k, serialize_meta_value(v)}
+    end)
+  end
+
+  defp serialize_meta_value(v) when is_atom(v), do: Atom.to_string(v)
+  defp serialize_meta_value(v) when is_list(v), do: Enum.map(v, &serialize_meta_value/1)
+  defp serialize_meta_value(v), do: v
+
+  defp deserialize_metadata(nil), do: %{}
+
+  defp deserialize_metadata(meta) when is_map(meta) do
+    Map.new(meta, fn {k, v} -> {String.to_atom(k), deserialize_meta_value(v)} end)
+  end
+
+  defp deserialize_meta_value(v) when is_binary(v), do: String.to_atom(v)
+  defp deserialize_meta_value(v) when is_list(v), do: Enum.map(v, &deserialize_meta_value/1)
+  defp deserialize_meta_value(v), do: v
 end

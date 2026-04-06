@@ -85,7 +85,7 @@ defmodule AgentWorkshop.Workshop do
       Workshop (this module -- IEx helpers, no supervision duties)
   """
 
-  alias AgentWorkshop.{Budget, Profiles, PubSub, Scheduler, Store, Telemetry, Work}
+  alias AgentWorkshop.{Budget, Profiles, PubSub, Scheduler, Store, Telemetry, Work, Workflow}
   alias AgentWorkshop.Workshop.Display
 
   @table :agent_workshop_agents
@@ -163,7 +163,8 @@ defmodule AgentWorkshop.Workshop do
           AgentWorkshop.Store.table_name(),
           AgentWorkshop.Work.table_name(),
           AgentWorkshop.Budget.table_name(),
-          AgentWorkshop.Profiles.table_name()
+          AgentWorkshop.Profiles.table_name(),
+          Workflow.table_name()
         ] do
       if :ets.info(table) != :undefined, do: :ets.delete_all_objects(table)
     end
@@ -1422,6 +1423,173 @@ defmodule AgentWorkshop.Workshop do
 
     infos
   end
+
+  # ── Workflows ─────────────────────────────────────────────────
+
+  @doc """
+  Define a declarative workflow -- a sequence of stages that expand
+  into work board items with dependencies.
+
+  Each stage is a tuple: `{stage_name, agent, title}` or
+  `{stage_name, agent, title, opts}`.
+
+  ## Stage options
+
+    * `:from` - data source: a file path (string), a stage name (atom),
+      or a list of stage names (fan-in)
+    * `:type` - work board type (default: `:custom`)
+    * `:priority` - priority 1-5 (default: 3)
+
+  ## Example
+
+      workflow(:feature, [
+        {:plan, :planner, "Break this into tasks", from: "specs/feature.md"},
+        {:implement, :coder, "Implement the plan", from: :plan},
+        {:test, :tester, "Write tests", from: :implement},
+        {:review, :reviewer, "Review everything", from: [:implement, :test]}
+      ])
+  """
+  @spec workflow(atom(), list()) :: :ok | {:error, term()}
+  def workflow(name, stages) do
+    case Workflow.define(name, stages) do
+      :ok ->
+        stage_count = length(stages)
+        print_info("Workflow #{inspect(name)} defined (#{stage_count} stages)")
+        :ok
+
+      {:error, reason} ->
+        print_error("Cannot define workflow: #{inspect(reason)}")
+        {:error, reason}
+    end
+  end
+
+  @doc """
+  Run a workflow by expanding its stages into work board items.
+
+  Board workers will automatically pick up and execute the stages
+  in dependency order.
+
+  ## Example
+
+      run_workflow(:feature)
+  """
+  @spec run_workflow(atom()) :: :ok | {:error, term()}
+  def run_workflow(name) do
+    case Workflow.run(name) do
+      :ok ->
+        workflow = Workflow.get(name)
+        stage_count = length(workflow.stages)
+        print_info("Workflow #{inspect(name)} started (#{stage_count} stages)")
+        :ok
+
+      {:error, :not_found} ->
+        print_error("Unknown workflow #{inspect(name)}")
+        {:error, :not_found}
+
+      {:error, :already_running} ->
+        print_error("Workflow #{inspect(name)} is already running. Use reset_workflow/1 first.")
+        {:error, :already_running}
+    end
+  end
+
+  @doc """
+  Reset a workflow -- removes its work items and resets to :defined.
+
+  Use this to re-run a workflow or clear a failed run.
+
+  ## Example
+
+      reset_workflow(:feature)
+      run_workflow(:feature)
+  """
+  @spec reset_workflow(atom()) :: :ok | {:error, term()}
+  def reset_workflow(name) do
+    case Workflow.reset(name) do
+      :ok ->
+        print_info("Workflow #{inspect(name)} reset.")
+        :ok
+
+      {:error, :not_found} ->
+        print_error("Unknown workflow #{inspect(name)}")
+        {:error, :not_found}
+    end
+  end
+
+  @doc """
+  Show workflow progress -- each stage with its current status.
+
+  ## Example
+
+      workflow_status(:feature)
+  """
+  @spec workflow_status(atom()) :: {Workflow.t(), [Work.t() | nil]} | {:error, term()}
+  def workflow_status(name) do
+    case Workflow.status(name) do
+      {:error, :not_found} ->
+        print_error("Unknown workflow #{inspect(name)}")
+        {:error, :not_found}
+
+      {workflow, items} ->
+        print_workflow_status(workflow, items)
+        {workflow, items}
+    end
+  end
+
+  @doc """
+  List all defined workflows.
+
+  ## Example
+
+      workflows()
+  """
+  @spec workflows() :: [Workflow.t()]
+  def workflows do
+    wfs = Workflow.list()
+
+    if wfs == [] do
+      print_info("No workflows defined.")
+    else
+      for wf <- wfs do
+        print_info("#{inspect(wf.name)}: #{wf.status} (#{length(wf.stages)} stages)")
+      end
+    end
+
+    wfs
+  end
+
+  defp print_workflow_status(workflow, items) do
+    status_label =
+      case workflow.status do
+        :defined -> "defined (not started)"
+        :running -> "running"
+        :completed -> "completed"
+        :failed -> "FAILED"
+      end
+
+    print_info("#{inspect(workflow.name)} workflow (#{status_label})")
+
+    Enum.zip(workflow.stages, items)
+    |> Enum.each(fn pair -> print_workflow_stage(pair) end)
+  end
+
+  defp print_workflow_stage({stage, nil}) do
+    print_info("  [pending] #{inspect(stage.name)} - #{stage.title}")
+  end
+
+  defp print_workflow_stage({stage, item}) do
+    status_str = format_work_status(item.status)
+    deps = if stage.depends_on != [], do: "  deps: #{inspect(stage.depends_on)}", else: ""
+    print_info("  [#{status_str}] #{inspect(stage.name)} - #{stage.title}#{deps}")
+  end
+
+  defp format_work_status(:new), do: "new"
+  defp format_work_status(:ready), do: "ready"
+  defp format_work_status(:claimed), do: "claimed"
+  defp format_work_status(:in_progress), do: "in_progress"
+  defp format_work_status(:done), do: "done"
+  defp format_work_status(:failed), do: "FAILED"
+  defp format_work_status(:blocked), do: "blocked"
+  defp format_work_status(:cancelled), do: "cancelled"
 
   # ── Interaction ───────────────────────────────────────────────
 

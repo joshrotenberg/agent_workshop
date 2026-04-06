@@ -19,7 +19,8 @@ defmodule AgentWorkshop.TableManager do
     :agent_workshop_store,
     :agent_workshop_work,
     :agent_workshop_budgets,
-    :agent_workshop_profiles
+    :agent_workshop_profiles,
+    :agent_workshop_workflows
   ]
 
   def start_link(_opts) do

@@ -21,7 +21,7 @@ defmodule AgentWorkshop.Persistence do
 
   use GenServer
 
-  alias AgentWorkshop.{PubSub, Store, Work}
+  alias AgentWorkshop.{PubSub, Store, Work, Workflow}
 
   @name __MODULE__
   @default_dir ".agent_workshop"
@@ -164,12 +164,14 @@ defmodule AgentWorkshop.Persistence do
   defp write_target({:work, _, _, _}), do: :work
   defp write_target({:store, _, _}), do: :store
   defp write_target({:store, _}), do: :store
+  defp write_target({:workflow, _, _}), do: :workflows
   defp write_target(_), do: nil
 
   defp flush_pending(state) do
     if state.enabled and state.dir do
       if :work in state.pending, do: write_work(state.dir)
       if :store in state.pending, do: write_store(state.dir)
+      if :workflows in state.pending, do: write_workflows(state.dir)
     end
 
     if state.timer do
@@ -185,6 +187,12 @@ defmodule AgentWorkshop.Persistence do
     items = Work.list() |> Enum.map(&Work.to_map/1)
     json = Jason.encode!(items, pretty: true)
     File.write!(Path.join(dir, "work.json"), json)
+  end
+
+  defp write_workflows(dir) do
+    workflows = Workflow.list() |> Enum.map(&Workflow.to_map/1)
+    json = Jason.encode!(workflows, pretty: true)
+    File.write!(Path.join(dir, "workflows.json"), json)
   end
 
   defp write_store(dir) do
@@ -231,6 +239,7 @@ defmodule AgentWorkshop.Persistence do
   defp load_from_disk(state) do
     load_work(state.dir)
     load_store(state.dir)
+    load_workflows(state.dir)
     state
   end
 
@@ -242,6 +251,20 @@ defmodule AgentWorkshop.Persistence do
       for map <- items do
         item = Work.from_map(map)
         :ets.insert(Work.table_name(), {item.id, item})
+      end
+    else
+      _ -> :ok
+    end
+  end
+
+  defp load_workflows(dir) do
+    path = Path.join(dir, "workflows.json")
+
+    with {:ok, contents} <- read_json_file(path),
+         {:ok, workflows} when is_list(workflows) <- Jason.decode(contents) do
+      for map <- workflows do
+        workflow = Workflow.from_map(map)
+        :ets.insert(Workflow.table_name(), {workflow.name, workflow})
       end
     else
       _ -> :ok
