@@ -23,7 +23,7 @@ defmodule AgentWorkshop.BoardWorker do
 
   use GenServer
 
-  alias AgentWorkshop.{PubSub, Telemetry, Work, Workshop}
+  alias AgentWorkshop.{PubSub, Telemetry, Work, Workflow, Workshop}
 
   @registry AgentWorkshop.BoardWorker.Registry
 
@@ -231,6 +231,13 @@ defmodule AgentWorkshop.BoardWorker do
         Work.complete(item_id, result_text)
         Telemetry.event(:board_worker_completed, %{}, %{agent: agent_name, item: item_id})
         PubSub.broadcast({:board_worker, :completed, agent_name, item_id})
+
+        # Check if this completion finishes a workflow
+        case Workflow.workflow_for_item(item_id) do
+          nil -> :ok
+          wf_name -> Workflow.check_completion(wf_name)
+        end
+
         # Reset agent session so it starts fresh for the next work item
         Workshop.reset(agent_name)
         send(worker_pid, {:work_done, item_id})
@@ -240,19 +247,46 @@ defmodule AgentWorkshop.BoardWorker do
 
       _ ->
         Work.fail(item_id, "agent unavailable")
+        check_workflow_failure(item_id)
         send(worker_pid, {:work_failed, item_id})
     end
   rescue
     _ ->
       Work.fail(item_id, "watcher crashed")
+      check_workflow_failure(item_id)
       send(worker_pid, {:work_failed, item_id})
   end
 
   defp build_prompt(item) do
-    if item.spec do
-      "#{item.title}\n\nSpec:\n#{item.spec}"
-    else
-      item.title
+    base =
+      if item.spec do
+        "#{item.title}\n\nSpec:\n#{item.spec}"
+      else
+        item.title
+      end
+
+    case Map.get(item.metadata, :from_stages, []) do
+      [] -> base
+      stage_ids -> append_stage_results(base, stage_ids)
+    end
+  end
+
+  defp append_stage_results(base, stage_ids) do
+    context =
+      Enum.map_join(stage_ids, "\n\n---\n\n", fn id ->
+        case Work.get(id) do
+          %{result: result} when is_binary(result) -> "## Result from #{id}\n\n#{result}"
+          _ -> ""
+        end
+      end)
+
+    "#{base}\n\n## Previous stage results\n\n#{context}"
+  end
+
+  defp check_workflow_failure(item_id) do
+    case Workflow.workflow_for_item(item_id) do
+      nil -> :ok
+      wf_name -> Workflow.check_completion(wf_name)
     end
   end
 
