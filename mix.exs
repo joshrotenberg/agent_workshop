@@ -14,7 +14,10 @@ defmodule AgentWorkshop.MixProject do
       docs: docs(),
       package: package(),
       name: "AgentWorkshop",
-      description: "Multi-agent orchestration from IEx. Backend-agnostic, MCP-enabled."
+      description: "Multi-agent orchestration from IEx. Backend-agnostic, MCP-enabled.",
+      dialyzer: [
+        plt_file: {:no_warn, "_build/dev/dialyxir_#{System.otp_release()}.plt"}
+      ]
     ]
   end
 
@@ -41,7 +44,8 @@ defmodule AgentWorkshop.MixProject do
       {:phoenix_live_view, "~> 1.0", optional: true},
       {:phoenix_html, "~> 4.0", optional: true},
       {:ex_doc, "~> 0.35", only: :dev, runtime: false},
-      {:credo, "~> 1.7", only: [:dev, :test], runtime: false}
+      {:credo, "~> 1.7", only: [:dev, :test], runtime: false},
+      {:dialyxir, "~> 1.4", only: [:dev, :test], runtime: false}
     ]
   end
 
