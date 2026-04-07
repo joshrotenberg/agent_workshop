@@ -28,7 +28,8 @@ defmodule AgentWorkshop.Application do
     {:nowarn_function, daemonize: 0},
     {:nowarn_function, start_client: 1},
     {:nowarn_function, burrito_bin_path: 0},
-    {:nowarn_function, await_daemon: 1}
+    {:nowarn_function, await_daemon: 1},
+    {:nowarn_function, try_connect_daemon: 0}
   ]
 
   @burrito_args Burrito.Util.Args
