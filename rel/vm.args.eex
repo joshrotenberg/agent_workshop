@@ -1,0 +1,3 @@
+## Customize flags given to the VM: https://www.erlang.org/doc/man/erl.html
+## Do not set -name/-sname/-setcookie here -- the application handles
+## distribution setup based on the CLI mode (daemon vs client vs library).

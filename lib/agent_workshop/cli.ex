@@ -21,7 +21,17 @@ defmodule AgentWorkshop.CLI do
   end
 
   @doc false
-  def mode, do: Process.get(:aw_mode, :local)
+  def mode do
+    case Process.get(:aw_mode) do
+      nil ->
+        detected = AgentWorkshop.Application.try_connect_daemon()
+        Process.put(:aw_mode, detected)
+        detected
+
+      m ->
+        m
+    end
+  end
 
   @doc false
   def call(mod, fun, args) do
