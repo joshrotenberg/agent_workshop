@@ -1,6 +1,7 @@
 defmodule AgentWorkshop.Application do
   @moduledoc false
   use Application
+  require Logger
 
   # Supervision tree start order matters:
   #
@@ -27,7 +28,8 @@ defmodule AgentWorkshop.Application do
     {:nowarn_function, daemonize: 0},
     {:nowarn_function, start_client: 1},
     {:nowarn_function, burrito_bin_path: 0},
-    {:nowarn_function, await_daemon: 1}
+    {:nowarn_function, await_daemon: 1},
+    {:nowarn_function, try_connect_daemon: 0}
   ]
 
   @burrito_args Burrito.Util.Args
@@ -109,33 +111,20 @@ defmodule AgentWorkshop.Application do
     end
   end
 
-  # Client mode: connect to daemon via erpc, run CLI command, exit
+  # Client mode: start local supervision tree, run CLI command, exit.
+  # Daemon connection is lazy -- CLI.call/3 attempts it on first use.
   defp start_client(args) do
-    mode =
-      with client <- :"aw_cli_#{System.system_time(:nanosecond)}@localhost",
-           {:ok, _} <- Node.start(client, :shortnames),
-           true <- Node.set_cookie(@cookie) || true,
-           true <- Node.connect(@daemon_node) do
-        :remote
-      else
-        _ -> :local
-      end
+    AgentWorkshop.Workshop.init_global_state()
+    children = supervision_children()
 
-    if mode == :local do
-      AgentWorkshop.Workshop.init_global_state()
+    {:ok, _} =
+      Supervisor.start_link(children,
+        strategy: :one_for_one,
+        name: AgentWorkshop.Supervisor
+      )
 
-      children = supervision_children()
-
-      {:ok, _} =
-        Supervisor.start_link(children,
-          strategy: :one_for_one,
-          name: AgentWorkshop.Supervisor
-        )
-    end
-
-    Process.put(:aw_mode, mode)
+    Process.put(:aw_mode, :local)
     Cheer.run(AgentWorkshop.CLI, args, prog: "aw")
-
     System.halt(0)
   end
 
@@ -158,6 +147,29 @@ defmodule AgentWorkshop.Application do
       true ->
         :library
     end
+  end
+
+  @doc """
+  Try to connect to a running daemon. Returns :remote or :local.
+  Called lazily from CLI.call/3 when a command needs daemon access.
+  Suppresses the OTP notice about epmd not running.
+  """
+  def try_connect_daemon do
+    prev_level = :logger.get_primary_config() |> Map.get(:level, :notice)
+    :logger.set_primary_config(:level, :error)
+
+    result =
+      with client <- :"aw_cli_#{System.system_time(:nanosecond)}@localhost",
+           {:ok, _} <- Node.start(client, :shortnames),
+           true <- Node.set_cookie(@cookie) || true,
+           true <- Node.connect(@daemon_node) do
+        :remote
+      else
+        _ -> :local
+      end
+
+    :logger.set_primary_config(:level, prev_level)
+    result
   end
 
   defp in_burrito? do
